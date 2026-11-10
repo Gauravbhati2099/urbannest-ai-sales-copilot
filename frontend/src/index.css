@@ -18,10 +18,18 @@
   --green-soft: #e9f2ed;
   --paper: #fff;
   --canvas: #f7f8f6;
+  --discordant: #ed765c;
+  --scroll-thumb: #b8c8bc;
+  --scroll-track: #eef2ee;
   --shadow: 0 12px 35px rgba(32, 48, 43, .07);
 }
 
 * { box-sizing: border-box; }
+* { scrollbar-width: thin; scrollbar-color: var(--scroll-thumb) var(--scroll-track); }
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-track { background: var(--scroll-track); }
+::-webkit-scrollbar-thumb { border: 2px solid var(--scroll-track); border-radius: 9px; background: var(--scroll-thumb); }
+::-webkit-scrollbar-thumb:hover { background: var(--green); }
 body { margin: 0; min-width: 320px; min-height: 100vh; }
 button, input, select, textarea { font: inherit; }
 button { cursor: pointer; }

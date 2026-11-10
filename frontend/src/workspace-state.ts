@@ -1,9 +1,11 @@
-import type { AuditEvent, CSVImportResult, Dashboard, Lead, Task } from './api'
+import type { AuditEvent, CSVImportResult, Dashboard, Lead, Task, User } from './api'
 
 export interface WorkspaceState {
   dashboard: Dashboard | null
   leads: Lead[]
   tasks: Task[]
+  completedTasks: Task[]
+  teamUsers: User[]
   auditEvents: AuditEvent[]
   unreadCount: number
   loading: boolean
@@ -14,7 +16,7 @@ export interface WorkspaceState {
 
 export type WorkspaceAction =
   | { type: 'refresh-started' }
-  | { type: 'refresh-succeeded'; dashboard: Dashboard; leads: Lead[]; tasks: Task[]; events: AuditEvent[]; unreadCount: number }
+  | { type: 'refresh-succeeded'; dashboard: Dashboard; leads: Lead[]; tasks: Task[]; completedTasks: Task[]; teamUsers: User[]; events: AuditEvent[]; unreadCount: number }
   | { type: 'refresh-failed'; error: string }
   | { type: 'request-failed'; error: string }
   | { type: 'request-succeeded' }
@@ -29,6 +31,8 @@ export const initialWorkspaceState: WorkspaceState = {
   dashboard: null,
   leads: [],
   tasks: [],
+  completedTasks: [],
+  teamUsers: [],
   auditEvents: [],
   unreadCount: 0,
   loading: false,
@@ -47,6 +51,8 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         dashboard: action.dashboard,
         leads: action.leads,
         tasks: action.tasks,
+        completedTasks: action.completedTasks,
+        teamUsers: action.teamUsers,
         auditEvents: action.events,
         unreadCount: action.unreadCount,
         loading: false,

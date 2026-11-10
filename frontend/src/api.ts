@@ -4,6 +4,7 @@ const API_PREFIX = `${API_ROOT}/api/v1`
 export type LeadStatus = 'new' | 'contacted' | 'site_visit' | 'negotiation' | 'won' | 'lost'
 export type LeadSource = 'website' | '99acres' | 'magicbricks' | 'instagram' | 'whatsapp' | 'walk_in' | 'manual' | 'csv_import' | 'other'
 export type UserRole = 'owner' | 'manager' | 'agent'
+export type TaskStatus = 'open' | 'completed' | 'cancelled'
 
 export interface User {
   id: string
@@ -60,7 +61,7 @@ export interface Task {
   title: string
   description: string | null
   due_at: string
-  status: 'open' | 'completed' | 'cancelled'
+  status: TaskStatus
   completed_at: string | null
   created_at: string
   updated_at: string
@@ -74,7 +75,7 @@ export interface DashboardTask {
   lead_status: LeadStatus
   title: string
   due_at: string
-  status: 'open' | 'completed' | 'cancelled'
+  status: TaskStatus
 }
 
 export interface Dashboard {
@@ -109,6 +110,57 @@ export interface CSVImportResult {
   errors: { row: number; message: string }[]
 }
 
+export interface UserCreateRequest {
+  full_name: string
+  email: string
+  role: UserRole
+}
+
+export interface UserUpdateRequest {
+  full_name?: string
+  role?: UserRole
+  is_active?: boolean
+}
+
+export interface UserCreatedResponse {
+  user: User
+  temporary_password: string
+}
+
+export interface PasswordResetResponse {
+  user_id: string
+  temporary_password: string
+  must_change_password: boolean
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function formatApiDetail(detail: unknown, status: number): string {
+  if (typeof detail === 'string') return detail
+  if (Array.isArray(detail)) {
+    const messages = detail.flatMap((item) => {
+      if (typeof item === 'string') return [item]
+      if (!isRecord(item) || typeof item.msg !== 'string') return []
+      const location = Array.isArray(item.loc)
+        ? item.loc.filter((part): part is string | number => typeof part === 'string' || typeof part === 'number')
+          .filter((part) => part !== 'body' && part !== 'query' && part !== 'path')
+          .map((part) => String(part).replaceAll('_', ' '))
+          .join(' › ')
+        : ''
+      return [location ? `${location}: ${item.msg}` : item.msg]
+    })
+    if (messages.length) return messages.join('; ')
+  }
+  if (isRecord(detail)) {
+    for (const key of ['message', 'msg', 'error']) {
+      if (typeof detail[key] === 'string') return detail[key]
+    }
+  }
+  return `The server returned an unexpected error (${status}).`
+}
+
 export async function api<T>(path: string, token: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers)
   if (init.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) {
@@ -128,10 +180,7 @@ export async function api<T>(path: string, token: string, init: RequestInit = {}
     let message = `Request failed (${response.status})`
     try {
       const body: unknown = await response.json()
-      if (typeof body === 'object' && body !== null && 'detail' in body) {
-        const detail = body.detail
-        message = typeof detail === 'string' ? detail : JSON.stringify(detail)
-      }
+      if (isRecord(body) && 'detail' in body) message = formatApiDetail(body.detail, response.status)
     } catch {
       // Some platform errors return an empty or non-JSON response.
     }

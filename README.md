@@ -34,12 +34,15 @@ $env:PYTHONPATH = "."
 
 ## Frontend
 
-The basic CRM frontend lives in `frontend`. It includes sign-in and forced
-password change, role-scoped dashboard data, lead search and pipeline updates,
-lead details and activity, follow-ups, CSV import for managers/owners, and the
-shared activity feed. The theme preference is saved on the current browser.
-On the leads page, press `/` to focus search; press `Escape` to dismiss an
-open panel or dialog.
+The CRM frontend lives in `frontend`. It includes sign-in and forced password
+change, role-scoped dashboard data, lead search and pipeline updates, lead
+details and activity, open and completed follow-ups, CSV import for
+managers/owners, and a shared activity feed with links to related records.
+Owners and managers can manage team accounts and access; users can change their
+own password from their profile. The navigation can be collapsed, and the
+theme and sidebar preferences are saved in the current browser. API validation
+errors are shown as readable messages. On the leads page, press `/` to focus
+search; press `Escape` to dismiss an open panel or dialog.
 
 1. Create `frontend\.env.local` from `frontend\.env.example`. The default API
    URL is the deployed Render service; override `VITE_API_BASE_URL` when using

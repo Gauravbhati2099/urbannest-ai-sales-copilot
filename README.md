@@ -37,7 +37,9 @@ $env:PYTHONPATH = "."
 The basic CRM frontend lives in `frontend`. It includes sign-in and forced
 password change, role-scoped dashboard data, lead search and pipeline updates,
 lead details and activity, follow-ups, CSV import for managers/owners, and the
-shared activity feed.
+shared activity feed. The theme preference is saved on the current browser.
+On the leads page, press `/` to focus search; press `Escape` to dismiss an
+open panel or dialog.
 
 1. Create `frontend\.env.local` from `frontend\.env.example`. The default API
    URL is the deployed Render service; override `VITE_API_BASE_URL` when using
@@ -63,7 +65,10 @@ environment. After the site is deployed, add its exact URL to the API's
 `CORS_ORIGINS` and redeploy the API.
 
 The browser stores the bearer token in session storage, which clears when the
-tab's session ends. This frontend does not expose AI inference controls yet.
+tab's session ends. Search requests are debounced and stale workspace refreshes
+are cancelled. As this is an authenticated CRM rather than a public marketing
+site, the frontend intentionally sets `noindex` metadata and disallows crawler
+indexing. This frontend does not expose AI inference controls yet.
 
 ## Project documentation
 

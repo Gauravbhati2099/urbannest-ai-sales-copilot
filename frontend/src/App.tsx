@@ -650,7 +650,31 @@ function OverviewPage({ dashboard, leads, events, now, onOpenLead, onOpenLeadByI
   onOpenEvent: (event: AuditEvent) => void
 }) {
   const pipelineData = stages.map((stage) => ({ ...stage, count: dashboard?.pipeline_counts[stage.value] ?? 0 }))
-  const maxPipeline = Math.max(1, ...pipelineData.map((item) => item.count))
+  const pipelineTotal = pipelineData.reduce((total, item) => total + item.count, 0)
+  const chartColors: Record<LeadStatus, string> = {
+    new: '#93a2a4',
+    contacted: '#6a9dc1',
+    site_visit: '#8e83bc',
+    negotiation: '#d3a457',
+    won: '#68a17c',
+    lost: '#cb8379',
+  }
+  const chartSegments = pipelineData
+    .filter((item) => item.count > 0)
+    .reduce(
+      (segments, item) => {
+        const progress = segments.progress + (item.count / pipelineTotal) * 100
+        return {
+          progress,
+          stops: [...segments.stops, `${chartColors[item.value]} ${segments.progress}% ${progress}%`],
+        }
+      },
+      { progress: 0, stops: [] as string[] },
+    )
+    .stops
+  const pipelineChart = pipelineTotal
+    ? `conic-gradient(${chartSegments.join(', ')})`
+    : 'conic-gradient(var(--chart-empty) 0% 100%)'
   const dueTasks = [...(dashboard?.overdue ?? []), ...(dashboard?.due_today ?? [])].slice(0, 4)
   const recentLeads = leads.slice(0, 5)
 
@@ -666,8 +690,18 @@ function OverviewPage({ dashboard, leads, events, now, onOpenLead, onOpenLeadByI
       <section className="panel pipeline-panel">
         <div className="panel-header"><div><p className="eyebrow">YOUR SALES JOURNEY</p><h2>Pipeline at a glance</h2></div><button className="text-button" onClick={onOpenLeads}>View leads <ArrowUpRight size={15} /></button></div>
         <div className="pipeline-summary"><strong>{dashboard?.total_leads ?? '—'}</strong><span>leads in your pipeline</span><span className="pipeline-legend"><i /> Active</span></div>
-        <div className="pipeline-bars">
-          {pipelineData.map((item) => <div className="pipeline-row" key={item.value}><span className={`stage-dot dot-${item.tone}`} /><span className="pipeline-stage">{item.label}</span><div className="pipeline-track"><span className={`pipeline-fill fill-${item.tone}`} style={{ width: `${Math.max(item.count ? 6 : 0, (item.count / maxPipeline) * 100)}%` }} /></div><strong>{item.count}</strong></div>)}
+        <div className="pipeline-chart-layout">
+          <div className="pipeline-chart" role="img" aria-label={`Lead pipeline chart: ${pipelineData.map((item) => `${item.label} ${item.count}`).join(', ')}`} style={{ background: pipelineChart }}>
+            <div className="pipeline-chart-hole"><strong>{pipelineTotal}</strong><span>Total leads</span></div>
+          </div>
+          <div className="pipeline-legend-grid">
+            {pipelineData.map((item) => <div className="pipeline-legend-item" key={item.value}>
+              <span className={`stage-dot dot-${item.tone}`} />
+              <span className="pipeline-stage">{item.label}</span>
+              <strong>{item.count}</strong>
+              <small>{pipelineTotal ? `${Math.round((item.count / pipelineTotal) * 100)}%` : '0%'}</small>
+            </div>)}
+          </div>
         </div>
         <div className="pipeline-footer"><span>Progress, not just numbers.</span><span className="pipeline-footer-icon"><ArrowUpRight size={15} /></span></div>
       </section>

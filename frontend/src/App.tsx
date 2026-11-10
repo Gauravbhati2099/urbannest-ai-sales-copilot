@@ -462,11 +462,6 @@ function App() {
           {sidebarCollapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
         </button>
 
-        <div className="workspace-switcher">
-          <div className="workspace-avatar">UN</div>
-          <div><strong>UrbanNest Realty</strong><span>Sales workspace</span></div>
-        </div>
-
         <div className="nav-caption">WORKSPACE</div>
         <nav className="primary-nav" aria-label="Main navigation">
           <NavButton label="Overview" icon={<LayoutDashboard size={18} />} active={page === 'overview'} onClick={() => { setPage('overview'); setMobileNavOpen(false) }}>Overview</NavButton>
@@ -489,14 +484,12 @@ function App() {
       <main className="main-panel">
         <header className="topbar">
           <button className="icon-button mobile-menu" aria-label="Open menu" onClick={() => setMobileNavOpen(true)}><Menu size={20} /></button>
-          <div className="breadcrumbs"><strong>UrbanNest Realty</strong></div>
           <div className="topbar-actions">
             <div className={`api-indicator ${apiConnected ? '' : 'api-offline'}`}><span className="status-light" /> {apiConnected ? 'API connected' : 'API not checked'}</div>
             <ThemeButton theme={theme} onToggle={() => setTheme(theme === 'dark' ? 'light' : 'dark')} />
             <button className="icon-button notification-button" aria-label="Notifications" onClick={() => setShowNotifications((show) => !show)}>
               <Bell size={19} />{unreadCount > 0 && <span className="notification-badge">{unreadCount > 9 ? '9+' : unreadCount}</span>}
             </button>
-            <button className="icon-button topbar-profile" aria-label="Open your profile" title="My profile" onClick={() => setPage('profile')}><UserRound size={18} /></button>
           </div>
         </header>
 

@@ -59,10 +59,18 @@ def list_tasks(
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
     due: Literal["today", "overdue"] | None = None,
+    status_filter: Annotated[TaskStatus | None, Query(alias="status")] = None,
 ) -> list[Task]:
     statement = accessible_task_statement(current_user)
-    statement = statement.where(Task.status == TaskStatus.OPEN)
+    statement = statement.where(
+        Task.status == (status_filter or TaskStatus.OPEN)
+    )
     if due is not None:
+        if status_filter not in (None, TaskStatus.OPEN):
+            raise HTTPException(
+                status_code=422,
+                detail="Due filters can only be used with open tasks",
+            )
         local_now = datetime.now(ZoneInfo(os.getenv("APP_TIMEZONE", "Asia/Kolkata")))
         day_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
         day_end = day_start + timedelta(days=1)
@@ -74,6 +82,15 @@ def list_tasks(
             statement = statement.where(Task.due_at < start_utc)
     statement = statement.order_by(Task.due_at.asc())
     return list(session.scalars(statement.limit(limit).offset(offset)).all())
+
+
+@router.get("/{task_id}", response_model=TaskRead)
+def read_task(
+    task_id: UUID,
+    current_user: CurrentUser,
+    session: DatabaseSession,
+) -> Task:
+    return get_accessible_task(session, current_user, task_id)
 
 
 @router.post("", response_model=TaskRead, status_code=status.HTTP_201_CREATED)

@@ -908,6 +908,44 @@ class APIAuthAndAuthorizationTests(unittest.TestCase):
         self.assertEqual(completed.json()["status"], "completed")
         self.assertIsNotNone(completed.json()["completed_at"])
 
+    def test_completed_tasks_can_be_listed_and_task_detail_is_role_scoped(self) -> None:
+        headers = self.headers("agent@example.test")
+        completed = self.client.patch(
+            f"/api/v1/tasks/{self.task_id}",
+            headers=headers,
+            json={"status": "completed"},
+        )
+        self.assertEqual(completed.status_code, 200, completed.text)
+
+        completed_list = self.client.get(
+            "/api/v1/tasks?status=completed",
+            headers=headers,
+        )
+        self.assertEqual(completed_list.status_code, 200, completed_list.text)
+        self.assertEqual(
+            {item["id"] for item in completed_list.json()},
+            {str(self.task_id)},
+        )
+
+        task_detail = self.client.get(
+            f"/api/v1/tasks/{self.task_id}",
+            headers=headers,
+        )
+        self.assertEqual(task_detail.status_code, 200, task_detail.text)
+        self.assertEqual(task_detail.json()["status"], "completed")
+
+        forbidden_detail = self.client.get(
+            f"/api/v1/tasks/{self.other_assigned_task_id}",
+            headers=headers,
+        )
+        self.assertEqual(forbidden_detail.status_code, 404)
+
+        invalid_due_filter = self.client.get(
+            "/api/v1/tasks?due=today&status=completed",
+            headers=headers,
+        )
+        self.assertEqual(invalid_due_filter.status_code, 422)
+
     def test_manager_can_reassign_task_to_active_team_member(self) -> None:
         response = self.client.patch(
             f"/api/v1/tasks/{self.task_id}",

@@ -1,0 +1,715 @@
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
+import {
+  Activity as ActivityIcon,
+  ArrowDownRight,
+  ArrowUpRight,
+  Bell,
+  CalendarDays,
+  Check,
+  CheckCheck,
+  ChevronDown,
+  ChevronRight,
+  CircleAlert,
+  Clock3,
+  LayoutDashboard,
+  LogOut,
+  MapPin,
+  Menu,
+  Plus,
+  RefreshCw,
+  Search,
+  SlidersHorizontal,
+  Sparkles,
+  Upload,
+  Users,
+  X,
+} from 'lucide-react'
+import {
+  api,
+  API_ROOT,
+  type Activity,
+  type AuditEvent,
+  type Dashboard,
+  type CSVImportResult,
+  type Lead,
+  type LeadSource,
+  type LeadStatus,
+  type LoginResponse,
+  type Task,
+  type User,
+} from './api'
+import './App.css'
+
+type Page = 'overview' | 'leads' | 'tasks' | 'activity'
+
+const stages: { value: LeadStatus; label: string; tone: string }[] = [
+  { value: 'new', label: 'New', tone: 'slate' },
+  { value: 'contacted', label: 'Contacted', tone: 'blue' },
+  { value: 'site_visit', label: 'Site visit', tone: 'violet' },
+  { value: 'negotiation', label: 'Negotiation', tone: 'amber' },
+  { value: 'won', label: 'Won', tone: 'green' },
+  { value: 'lost', label: 'Lost', tone: 'rose' },
+]
+
+const sourceLabels: Record<LeadSource, string> = {
+  website: 'Website',
+  '99acres': '99acres',
+  magicbricks: 'MagicBricks',
+  instagram: 'Instagram',
+  whatsapp: 'WhatsApp',
+  walk_in: 'Walk-in',
+  manual: 'Manual',
+  csv_import: 'CSV import',
+  other: 'Other',
+}
+const CURRENT_YEAR = new Date().getFullYear()
+
+function initials(name: string) {
+  return name
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((part) => part[0] ?? '')
+    .join('')
+    .toUpperCase()
+}
+
+function formatCurrency(value: number | null | undefined) {
+  if (value == null) return '—'
+  if (value >= 10_000_000) return `₹${(value / 10_000_000).toFixed(value % 10_000_000 ? 1 : 0)}Cr`
+  if (value >= 100_000) return `₹${(value / 100_000).toFixed(value % 100_000 ? 1 : 0)}L`
+  return `₹${new Intl.NumberFormat('en-IN').format(value)}`
+}
+
+function budgetRange(lead: Lead) {
+  if (lead.budget_min_inr == null && lead.budget_max_inr == null) return 'Budget not set'
+  if (lead.budget_min_inr != null && lead.budget_max_inr != null) {
+    return `${formatCurrency(lead.budget_min_inr)} – ${formatCurrency(lead.budget_max_inr)}`
+  }
+  return formatCurrency(lead.budget_min_inr ?? lead.budget_max_inr)
+}
+
+function formatDate(value: string, options?: Intl.DateTimeFormatOptions) {
+  return new Intl.DateTimeFormat('en-IN', options ?? { day: 'numeric', month: 'short' }).format(
+    new Date(value),
+  )
+}
+
+function relativeDate(value: string) {
+  const date = new Date(value)
+  const today = new Date()
+  const startToday = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime()
+  const startDate = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()
+  const days = Math.round((startDate - startToday) / 86_400_000)
+  if (days === 0) return `Today, ${formatDate(value, { hour: 'numeric', minute: '2-digit' })}`
+  if (days === -1) return 'Yesterday'
+  return formatDate(value, { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })
+}
+
+function stageFor(status: LeadStatus) {
+  return stages.find((stage) => stage.value === status) ?? stages[0]
+}
+
+function taskIsOverdue(dueAt: string, now: number) {
+  return new Date(dueAt).getTime() < now
+}
+
+function getErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : 'Something went wrong. Please try again.'
+}
+
+function App() {
+  const [token, setToken] = useState(() => sessionStorage.getItem('urbannest_token') ?? '')
+  const [renderTime] = useState(() => new Date())
+  const [user, setUser] = useState<User | null>(null)
+  const [authReady, setAuthReady] = useState(() => !sessionStorage.getItem('urbannest_token'))
+  const [page, setPage] = useState<Page>('overview')
+  const [dashboard, setDashboard] = useState<Dashboard | null>(null)
+  const [leads, setLeads] = useState<Lead[]>([])
+  const [tasks, setTasks] = useState<Task[]>([])
+  const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([])
+  const [unreadCount, setUnreadCount] = useState(0)
+  const [query, setQuery] = useState('')
+  const [statusFilter, setStatusFilter] = useState('')
+  const [taskFilter, setTaskFilter] = useState<'all' | 'today' | 'overdue'>('all')
+  const [selectedLead, setSelectedLead] = useState<Lead | null>(null)
+  const [showCreateLead, setShowCreateLead] = useState(false)
+  const [showNotifications, setShowNotifications] = useState(false)
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+  const [apiConnected, setApiConnected] = useState(false)
+  const [importErrors, setImportErrors] = useState<CSVImportResult['errors']>([])
+
+  const setSession = useCallback((response: LoginResponse) => {
+    sessionStorage.setItem('urbannest_token', response.access_token)
+    setToken(response.access_token)
+    setUser(response.user)
+  }, [])
+
+  const signOut = useCallback(() => {
+    sessionStorage.removeItem('urbannest_token')
+    setToken('')
+    setUser(null)
+    setAuthReady(true)
+    setDashboard(null)
+    setLeads([])
+    setTasks([])
+    setAuditEvents([])
+    setPage('overview')
+  }, [])
+
+  useEffect(() => {
+    if (!token) {
+      return
+    }
+    let active = true
+    api<User>('/auth/me', token)
+      .then((currentUser) => {
+        if (active) setUser(currentUser)
+      })
+      .catch(() => {
+        if (active) signOut()
+      })
+      .finally(() => {
+        if (active) setAuthReady(true)
+      })
+    return () => {
+      active = false
+    }
+  }, [signOut, token])
+
+  const refresh = useCallback(async () => {
+    if (!token) return
+    setLoading(true)
+    setError('')
+    try {
+      const params = new URLSearchParams({ limit: '100' })
+      if (query.trim()) params.set('q', query.trim())
+      if (statusFilter) params.set('status', statusFilter)
+      const [summary, leadRows, taskRows, feed] = await Promise.all([
+        api<Dashboard>('/dashboard/summary', token),
+        api<Lead[]>(`/leads?${params.toString()}`, token),
+        api<Task[]>('/tasks?limit=100', token),
+        api<{ events: AuditEvent[]; unread_count: number }>('/audit/events?limit=8', token),
+      ])
+      setDashboard(summary)
+      setLeads(leadRows)
+      setTasks(taskRows)
+      setAuditEvents(feed.events)
+      setUnreadCount(feed.unread_count)
+      setApiConnected(true)
+    } catch (requestError) {
+      setApiConnected(false)
+      setError(getErrorMessage(requestError))
+    } finally {
+      setLoading(false)
+    }
+  }, [query, statusFilter, token])
+
+  useEffect(() => {
+    // eslint-disable-next-line react/set-state-in-effect -- Synchronizes server data with auth and search filters.
+    if (user && !user.must_change_password) void refresh()
+  }, [refresh, user])
+
+  const pageTitle = {
+    overview: 'Overview',
+    leads: 'Leads',
+    tasks: 'Follow-ups',
+    activity: 'Activity',
+  }[page]
+
+  const visibleTasks = useMemo(() => {
+    if (taskFilter === 'today') return dashboard?.due_today ?? []
+    if (taskFilter === 'overdue') return dashboard?.overdue ?? []
+    return tasks
+  }, [dashboard, taskFilter, tasks])
+
+  const updateLeadStatus = async (lead: Lead, status: LeadStatus) => {
+    try {
+      await api<Lead>(`/leads/${lead.id}`, token, {
+        method: 'PATCH',
+        body: JSON.stringify({ status }),
+      })
+      setNotice(`${lead.full_name} moved to ${stageFor(status).label.toLowerCase()}.`)
+      await refresh()
+      if (selectedLead?.id === lead.id) setSelectedLead({ ...lead, status })
+    } catch (requestError) {
+      setError(getErrorMessage(requestError))
+    }
+  }
+
+  const completeTask = async (task: Pick<Task, 'id'>) => {
+    try {
+      await api<Task>(`/tasks/${task.id}`, token, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'completed' }),
+      })
+      setNotice('Follow-up marked complete.')
+      await refresh()
+      setApiConnected(true)
+    } catch (requestError) {
+      setApiConnected(false)
+      setError(getErrorMessage(requestError))
+    }
+  }
+
+  const openLeadById = async (leadId: string) => {
+    const existing = leads.find((lead) => lead.id === leadId)
+    if (existing) {
+      setSelectedLead(existing)
+      return
+    }
+    try {
+      setSelectedLead(await api<Lead>(`/leads/${leadId}`, token))
+    } catch (requestError) {
+      setError(getErrorMessage(requestError))
+    }
+  }
+
+  const importCsv = async (file: File) => {
+    const formData = new FormData()
+    formData.append('file', file)
+    try {
+      const result = await api<CSVImportResult>('/leads/import', token, { method: 'POST', body: formData })
+      setImportErrors(result.errors)
+      setNotice(`Imported ${result.created_count} lead${result.created_count === 1 ? '' : 's'}${result.rejected_count ? `; ${result.rejected_count} row${result.rejected_count === 1 ? '' : 's'} need attention` : ''}.`)
+      await refresh()
+    } catch (requestError) {
+      setError(getErrorMessage(requestError))
+    }
+  }
+
+  const markRead = async () => {
+    try {
+      await api('/audit/read', token, { method: 'POST' })
+      setUnreadCount(0)
+      setAuditEvents((events) => events.map((event) => ({ ...event, is_read: true })))
+    } catch (requestError) {
+      setError(getErrorMessage(requestError))
+    }
+  }
+
+  const handleLogin = (response: LoginResponse) => {
+    setSession(response)
+    setError('')
+  }
+
+  if (!authReady) {
+    return <div className="boot-screen"><span className="brand-mark">U</span><span className="spinner" /></div>
+  }
+
+  if (!token || !user) {
+    return <LoginScreen onLogin={handleLogin} error={error} setError={setError} />
+  }
+
+  if (user.must_change_password) {
+    return <PasswordScreen token={token} onComplete={setSession} onSignOut={signOut} />
+  }
+
+  return (
+    <div className="app-shell">
+      {mobileNavOpen && <button className="mobile-backdrop" aria-label="Close menu" onClick={() => setMobileNavOpen(false)} />}
+      <aside className={`sidebar ${mobileNavOpen ? 'sidebar-open' : ''}`}>
+        <a className="brand" href="#" onClick={(event) => { event.preventDefault(); setPage('overview') }}>
+          <span className="brand-mark">U</span>
+          <span className="brand-copy"><strong>urbannest</strong><small>REALTY CRM</small></span>
+        </a>
+
+        <div className="workspace-switcher">
+          <div className="workspace-avatar">UN</div>
+          <div><strong>UrbanNest Realty</strong><span>Sales workspace</span></div>
+          <ChevronDown size={15} />
+        </div>
+
+        <div className="nav-caption">WORKSPACE</div>
+        <nav className="primary-nav" aria-label="Main navigation">
+          <NavButton icon={<LayoutDashboard size={18} />} active={page === 'overview'} onClick={() => { setPage('overview'); setMobileNavOpen(false) }}>Overview</NavButton>
+          <NavButton icon={<Users size={18} />} active={page === 'leads'} onClick={() => { setPage('leads'); setMobileNavOpen(false) }}>Leads<span className="nav-count">{dashboard?.total_leads ?? '—'}</span></NavButton>
+          <NavButton icon={<CalendarDays size={18} />} active={page === 'tasks'} onClick={() => { setPage('tasks'); setMobileNavOpen(false) }}>Follow-ups</NavButton>
+          <NavButton icon={<ActivityIcon size={18} />} active={page === 'activity'} onClick={() => { setPage('activity'); setMobileNavOpen(false) }}>Activity<span className="notification-dot" /></NavButton>
+        </nav>
+
+        <div className="sidebar-bottom">
+          <a className="help-card" href={`${API_ROOT}/docs`} target="_blank" rel="noreferrer">
+            <span className="help-icon"><Sparkles size={16} /></span>
+            <span><strong>Need a hand?</strong><small>Open the API guide</small></span>
+            <ArrowUpRight size={15} />
+          </a>
+          <div className="user-profile">
+            <div className="avatar avatar-user">{initials(user.full_name)}</div>
+            <div className="user-meta"><strong>{user.full_name}</strong><span>{user.role}</span></div>
+            <button className="icon-button profile-logout" aria-label="Sign out" title="Sign out" onClick={signOut}><LogOut size={17} /></button>
+          </div>
+        </div>
+      </aside>
+
+      <main className="main-panel">
+        <header className="topbar">
+          <button className="icon-button mobile-menu" aria-label="Open menu" onClick={() => setMobileNavOpen(true)}><Menu size={20} /></button>
+          <div className="breadcrumbs"><span>Workspace</span><ChevronRight size={14} /><strong>{pageTitle}</strong></div>
+          <div className="topbar-actions">
+            <div className={`api-indicator ${apiConnected ? '' : 'api-offline'}`}><span className="status-light" /> {apiConnected ? 'API connected' : 'API not checked'}</div>
+            <button className="icon-button notification-button" aria-label="Notifications" onClick={() => setShowNotifications((show) => !show)}>
+              <Bell size={19} />{unreadCount > 0 && <span className="notification-badge">{unreadCount > 9 ? '9+' : unreadCount}</span>}
+            </button>
+            <div className="avatar avatar-small">{initials(user.full_name)}</div>
+          </div>
+        </header>
+
+        <div className="page-content">
+          {(error || notice) && (
+            <div className={`toast ${error ? 'toast-error' : 'toast-success'}`} role="status">
+              {error ? <CircleAlert size={17} /> : <Check size={17} />}
+              <span>{error || notice}</span>
+              <button className="icon-button toast-close" aria-label="Dismiss message" onClick={() => { setError(''); setNotice('') }}><X size={16} /></button>
+            </div>
+          )}
+
+          <div className="page-heading">
+            <div>
+              <p className="eyebrow">{formatDate(renderTime.toISOString(), { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
+              <h1>{page === 'overview' ? `Good ${renderTime.getHours() < 12 ? 'morning' : renderTime.getHours() < 17 ? 'afternoon' : 'evening'}, ${user.full_name.split(' ')[0]}` : pageTitle}<span className="heading-period">.</span></h1>
+              <p className="heading-subtitle">{page === 'overview' ? 'Here’s what’s happening with your sales today.' : page === 'leads' ? 'Keep every conversation moving forward.' : page === 'tasks' ? 'A thoughtful follow-up can make all the difference.' : 'A shared view of what’s changing across your team.'}</p>
+            </div>
+            <div className="heading-actions">
+              <button className="button button-secondary refresh-button" onClick={() => void refresh()} disabled={loading}><RefreshCw size={16} className={loading ? 'spinning' : ''} /><span>Refresh</span></button>
+              <button className="button button-primary" onClick={() => setShowCreateLead(true)}><Plus size={17} /> Add lead</button>
+            </div>
+          </div>
+
+          {loading && !dashboard ? <LoadingState /> : (
+            <>
+              {page === 'overview' && (
+                <OverviewPage dashboard={dashboard} leads={leads} events={auditEvents} now={renderTime.getTime()} onOpenLead={setSelectedLead} onOpenLeadById={openLeadById} onOpenTasks={() => setPage('tasks')} onSeeAllActivity={() => setPage('activity')} onCompleteTask={completeTask} onOpenLeads={() => setPage('leads')} />
+              )}
+              {page === 'leads' && (
+                <LeadsPage leads={leads} query={query} setQuery={setQuery} statusFilter={statusFilter} setStatusFilter={setStatusFilter} onOpenLead={setSelectedLead} onUpdateStatus={updateLeadStatus} onAddLead={() => setShowCreateLead(true)} onImportFile={importCsv} importErrors={importErrors} onDismissImportErrors={() => setImportErrors([])} canImport={user.role !== 'agent'} loading={loading} />
+              )}
+              {page === 'tasks' && (
+                <TasksPage tasks={visibleTasks} filter={taskFilter} setFilter={setTaskFilter} now={renderTime.getTime()} onComplete={completeTask} onOpenLead={openLeadById} />
+              )}
+              {page === 'activity' && <ActivityPage events={auditEvents} unreadCount={unreadCount} onMarkRead={markRead} />}
+            </>
+          )}
+        </div>
+      </main>
+
+      {showNotifications && <NotificationPanel events={auditEvents.slice(0, 5)} unreadCount={unreadCount} onClose={() => setShowNotifications(false)} onOpenActivity={() => { setPage('activity'); setShowNotifications(false) }} />}
+      {selectedLead && <LeadDrawer lead={selectedLead} token={token} onClose={() => setSelectedLead(null)} onUpdated={(updated) => { setSelectedLead(updated); void refresh() }} onError={setError} />}
+      {showCreateLead && <CreateLeadModal token={token} currentUser={user} onClose={() => setShowCreateLead(false)} onCreated={async (lead) => { setShowCreateLead(false); setNotice(`Added ${lead.full_name} to your leads.`); setPage('leads'); await refresh(); setSelectedLead(lead) }} onError={setError} />}
+    </div>
+  )
+}
+
+function NavButton({ icon, active, onClick, children }: { icon: React.ReactNode; active: boolean; onClick: () => void; children: React.ReactNode }) {
+  return <button className={`nav-item ${active ? 'nav-item-active' : ''}`} onClick={onClick}>{icon}<span>{children}</span></button>
+}
+
+function LoadingState() {
+  return <div className="loading-state"><span className="spinner" /><p>Getting your workspace ready…</p></div>
+}
+
+function LoginScreen({ onLogin, error, setError }: { onLogin: (response: LoginResponse) => void; error: string; setError: (message: string) => void }) {
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setSubmitting(true)
+    setError('')
+    try {
+      const response = await api<LoginResponse>('/auth/login', '', { method: 'POST', body: JSON.stringify({ email, password }) })
+      onLogin(response)
+    } catch (requestError) {
+      setError(getErrorMessage(requestError))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="auth-page">
+      <div className="auth-art">
+        <a className="brand brand-light" href="#"><span className="brand-mark">U</span><span className="brand-copy"><strong>urbannest</strong><small>REALTY CRM</small></span></a>
+        <div className="art-copy">
+          <span className="art-kicker"><span /> YOUR NEXT MOVE, MADE CLEAR</span>
+          <h1>Every lead<br />has a <em>home.</em></h1>
+          <p>One calm place to build better client relationships and close with confidence.</p>
+        </div>
+        <div className="art-building"><div className="building-sun" /><div className="building-tower tower-one"><i /><i /><i /><i /><i /><i /><i /><i /><i /><i /><i /><i /></div><div className="building-tower tower-two"><i /><i /><i /><i /><i /><i /><i /><i /></div><div className="building-house"><i /><i /><i /><i /></div><div className="building-ground" /></div>
+        <p className="art-footnote">MADE FOR THE WAY REAL ESTATE REALLY WORKS.</p>
+      </div>
+      <div className="auth-main">
+        <div className="auth-form-wrap">
+          <span className="auth-overline">WELCOME BACK</span>
+          <h2>Sign in to your<br />workspace<span className="heading-period">.</span></h2>
+          <p className="auth-description">Good to see you again. Let’s pick up where you left off.</p>
+          <form className="auth-form" onSubmit={(event) => void submit(event)}>
+            <label>Email address<input type="email" autoComplete="username" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@urbannest.in" required /></label>
+            <label>Password<input type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Enter your password" required /></label>
+            {error && <div className="form-error"><CircleAlert size={16} />{error}</div>}
+            <button className="button button-primary auth-submit" disabled={submitting}>{submitting ? 'Signing in…' : 'Sign in'}<ArrowUpRight size={17} /></button>
+          </form>
+          <div className="auth-note"><span className="secure-dot" /> Your workspace is private and secure.</div>
+        </div>
+        <div className="auth-footer"><span>© {CURRENT_YEAR} UrbanNest Realty</span><span>Questions? Ask your team owner.</span></div>
+      </div>
+    </div>
+  )
+}
+
+function PasswordScreen({ token, onComplete, onSignOut }: { token: string; onComplete: (response: LoginResponse) => void; onSignOut: () => void }) {
+  const [current, setCurrent] = useState('')
+  const [next, setNext] = useState('')
+  const [confirm, setConfirm] = useState('')
+  const [error, setError] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setError('')
+    if (next !== confirm) {
+      setError('Your new passwords do not match.')
+      return
+    }
+    setSubmitting(true)
+    try {
+      const response = await api<LoginResponse>('/auth/change-password', token, { method: 'POST', body: JSON.stringify({ current_password: current, new_password: next }) })
+      onComplete(response)
+    } catch (requestError) {
+      setError(getErrorMessage(requestError))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return <div className="password-page"><div className="password-card"><span className="brand-mark">U</span><span className="auth-overline">ONE QUICK STEP</span><h1>Make it your own<span className="heading-period">.</span></h1><p>Your account has a temporary password. Create a new one to continue.</p><form className="auth-form" onSubmit={(event) => void submit(event)}><label>Temporary password<input type="password" value={current} onChange={(event) => setCurrent(event.target.value)} required /></label><label>New password<input type="password" minLength={12} value={next} onChange={(event) => setNext(event.target.value)} required /><small className="field-hint">Use at least 12 characters.</small></label><label>Confirm new password<input type="password" value={confirm} onChange={(event) => setConfirm(event.target.value)} required /></label>{error && <div className="form-error"><CircleAlert size={16} />{error}</div>}<button className="button button-primary auth-submit" disabled={submitting}>{submitting ? 'Saving…' : 'Save new password'}<ArrowUpRight size={17} /></button></form><button className="text-button signout-link" onClick={onSignOut}>Sign out instead</button></div></div>
+}
+
+function OverviewPage({ dashboard, leads, events, now, onOpenLead, onOpenLeadById, onOpenTasks, onSeeAllActivity, onCompleteTask, onOpenLeads }: {
+  dashboard: Dashboard | null; leads: Lead[]; events: AuditEvent[]
+  now: number
+  onOpenLead: (lead: Lead) => void; onOpenLeadById: (leadId: string) => void
+  onOpenTasks: () => void; onSeeAllActivity: () => void
+  onCompleteTask: (task: Pick<Task, 'id'>) => void; onOpenLeads: () => void
+}) {
+  const pipelineData = stages.map((stage) => ({ ...stage, count: dashboard?.pipeline_counts[stage.value] ?? 0 }))
+  const maxPipeline = Math.max(1, ...pipelineData.map((item) => item.count))
+  const dueTasks = [...(dashboard?.overdue ?? []), ...(dashboard?.due_today ?? [])].slice(0, 4)
+  const recentLeads = leads.slice(0, 5)
+
+  return (
+    <div className="dashboard-grid">
+      <section className="stat-grid">
+        <StatCard label="Total leads" value={dashboard?.total_leads ?? '—'} icon={<Users size={18} />} hint="Across your workspace" tone="blue" trend="All time" />
+        <StatCard label="Open follow-ups" value={dashboard?.open_tasks ?? '—'} icon={<CalendarDays size={18} />} hint="Keep the momentum" tone="violet" trend={`${dashboard?.due_today_count ?? 0} due today`} />
+        <StatCard label="Due today" value={dashboard?.due_today_count ?? '—'} icon={<Clock3 size={18} />} hint="A good day to reconnect" tone="amber" trend="Today's focus" />
+        <StatCard label="Overdue" value={dashboard?.overdue_count ?? '—'} icon={<CircleAlert size={18} />} hint="Bring these back on track" tone="rose" trend={dashboard?.overdue_count ? 'Needs attention' : 'All caught up'} />
+      </section>
+
+      <section className="panel pipeline-panel">
+        <div className="panel-header"><div><p className="eyebrow">YOUR SALES JOURNEY</p><h2>Pipeline at a glance</h2></div><button className="text-button" onClick={onOpenLeads}>View leads <ArrowUpRight size={15} /></button></div>
+        <div className="pipeline-summary"><strong>{dashboard?.total_leads ?? '—'}</strong><span>leads in your pipeline</span><span className="pipeline-legend"><i /> Active</span></div>
+        <div className="pipeline-bars">
+          {pipelineData.map((item) => <div className="pipeline-row" key={item.value}><span className={`stage-dot dot-${item.tone}`} /><span className="pipeline-stage">{item.label}</span><div className="pipeline-track"><span className={`pipeline-fill fill-${item.tone}`} style={{ width: `${Math.max(item.count ? 6 : 0, (item.count / maxPipeline) * 100)}%` }} /></div><strong>{item.count}</strong></div>)}
+        </div>
+        <div className="pipeline-footer"><span>Progress, not just numbers.</span><span className="pipeline-footer-icon"><ArrowUpRight size={15} /></span></div>
+      </section>
+
+      <section className="panel followup-panel">
+        <div className="panel-header"><div><p className="eyebrow">DON’T LET A GOOD LEAD GO COLD</p><h2>Follow-ups to focus on</h2></div><button className="icon-button subtle-icon" aria-label="View all follow-ups" onClick={onOpenTasks}><ArrowUpRight size={17} /></button></div>
+        <div className="followup-tabs"><span className="followup-tab active">Priority <b>{dueTasks.length}</b></span><button className="followup-tab" onClick={onOpenTasks}>All tasks <ChevronRight size={13} /></button></div>
+        {dueTasks.length ? <div className="followup-list">{dueTasks.map((task) => {
+          const lead = leads.find((item) => item.id === task.lead_id)
+          return <div className="followup-item" key={task.id}>
+            <button className="task-check" title="Mark complete" onClick={() => onCompleteTask(task)}><Check size={13} /></button>
+              <button className="followup-copy" onClick={() => lead ? onOpenLead(lead) : onOpenLeadById(task.lead_id)}><strong>{task.title}</strong><span>{task.lead_name}</span></button>
+            <span className={`task-time ${taskIsOverdue(task.due_at, now) ? 'task-time-overdue' : ''}`}><Clock3 size={12} />{relativeDate(task.due_at)}</span>
+          </div>
+        })}</div> : <EmptyState title="You’re all caught up" description="No overdue or due-today follow-ups to show." />}
+        <button className="panel-link" onClick={onOpenTasks}>Open your task list <ArrowUpRight size={14} /></button>
+      </section>
+
+      <section className="panel leads-panel">
+        <div className="panel-header"><div><p className="eyebrow">FRESH OPPORTUNITIES</p><h2>Recently added leads</h2></div><button className="text-button" onClick={onOpenLeads}>All leads <ArrowUpRight size={15} /></button></div>
+        {recentLeads.length ? <div className="table-scroll"><table className="data-table compact-table"><thead><tr><th>Lead</th><th>Interest</th><th>Stage</th><th>Added</th></tr></thead><tbody>{recentLeads.map((lead) => <tr key={lead.id} onClick={() => onOpenLead(lead)}><td><div className="lead-cell"><div className={`avatar avatar-${avatarColor(lead.full_name)}`}>{initials(lead.full_name)}</div><span><strong>{lead.full_name}</strong><small>{lead.preferred_location || sourceLabels[lead.source]}</small></span></div></td><td>{lead.bhk ? `${lead.bhk} BHK` : '—'}<small className="table-subline">{budgetRange(lead)}</small></td><td><StatusPill status={lead.status} /></td><td className="muted-cell">{formatDate(lead.created_at)}</td></tr>)}</tbody></table></div> : <EmptyState title="No leads just yet" description="Add your first lead and start building your pipeline." />}
+      </section>
+
+      <section className="panel activity-panel">
+        <div className="panel-header"><div><p className="eyebrow">THE TEAM PULSE</p><h2>Recent activity</h2></div><button className="icon-button subtle-icon" aria-label="See all activity" onClick={onSeeAllActivity}><ArrowUpRight size={17} /></button></div>
+        {events.length ? <ActivityList events={events.slice(0, 5)} /> : <EmptyState title="A fresh start" description="Team updates will appear here as work happens." />}
+        <button className="panel-link" onClick={onSeeAllActivity}>View activity feed <ArrowUpRight size={14} /></button>
+      </section>
+    </div>
+  )
+}
+
+function StatCard({ label, value, icon, hint, tone, trend }: { label: string; value: string | number; icon: React.ReactNode; hint: string; tone: string; trend: string }) {
+  return <div className="stat-card"><div className={`stat-icon stat-${tone}`}>{icon}</div><span className="stat-label">{label}</span><strong className="stat-value">{value}</strong><span className="stat-hint">{hint}</span><span className={`stat-trend trend-${tone}`}>{tone === 'rose' ? <ArrowDownRight size={13} /> : <ArrowUpRight size={13} />}{trend}</span></div>
+}
+
+function LeadsPage({ leads, query, setQuery, statusFilter, setStatusFilter, onOpenLead, onUpdateStatus, onAddLead, onImportFile, importErrors, onDismissImportErrors, canImport, loading }: {
+  leads: Lead[]; query: string; setQuery: (value: string) => void; statusFilter: string
+  setStatusFilter: (value: string) => void; onOpenLead: (lead: Lead) => void
+  onUpdateStatus: (lead: Lead, status: LeadStatus) => void; onAddLead: () => void
+  onImportFile: (file: File) => void; importErrors: CSVImportResult['errors']
+  onDismissImportErrors: () => void; canImport: boolean; loading: boolean
+}) {
+  return <section className="panel full-panel leads-page-panel">
+    <div className="list-toolbar"><div className="search-box"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search leads, locations…" aria-label="Search leads" />{query && <button className="icon-button clear-search" aria-label="Clear search" onClick={() => setQuery('')}><X size={14} /></button>}</div><label className="select-wrap"><SlidersHorizontal size={15} /><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} aria-label="Filter by stage"><option value="">All stages</option>{stages.map((stage) => <option key={stage.value} value={stage.value}>{stage.label}</option>)}</select><ChevronDown size={14} /></label><span className="result-count">{leads.length} leads</span>{canImport && <label className="button button-secondary import-button"><Upload size={15} /> Import CSV<input type="file" accept=".csv,text/csv" onChange={(event) => { const file = event.target.files?.[0]; if (file) onImportFile(file); event.currentTarget.value = '' }} /></label>}</div>
+    {importErrors.length > 0 && <div className="csv-errors"><div><strong>Some rows weren’t imported</strong><span>Review the row numbers and fix the source CSV before retrying.</span></div><button className="icon-button" aria-label="Dismiss import errors" onClick={onDismissImportErrors}><X size={16} /></button><ul>{importErrors.slice(0, 8).map((item) => <li key={`${item.row}-${item.message}`}><strong>Row {item.row}</strong>{item.message}</li>)}</ul>{importErrors.length > 8 && <small>And {importErrors.length - 8} more row errors.</small>}</div>}
+    <div className="table-scroll"><table className="data-table leads-table"><thead><tr><th>Lead</th><th>Contact</th><th>Requirement</th><th>Source</th><th>Stage</th><th>Added</th><th aria-label="Open" /></tr></thead><tbody>{leads.map((lead) => <tr key={lead.id}><td><button className="lead-cell lead-cell-button" onClick={() => onOpenLead(lead)}><div className={`avatar avatar-${avatarColor(lead.full_name)}`}>{initials(lead.full_name)}</div><span><strong>{lead.full_name}</strong><small>{lead.preferred_location || 'Location not set'}</small></span></button></td><td><span>{lead.email || '—'}</span><small className="table-subline">{lead.phone || 'No phone'}</small></td><td><strong className="requirement-main">{lead.bhk ? `${lead.bhk} BHK` : 'Home search'}</strong><small className="table-subline">{budgetRange(lead)}</small></td><td><span className="source-label">{sourceLabels[lead.source]}</span></td><td><select className={`status-select status-${stageFor(lead.status).tone}`} aria-label={`Change ${lead.full_name} stage`} value={lead.status} onChange={(event) => void onUpdateStatus(lead, event.target.value as LeadStatus)}>{stages.map((stage) => <option key={stage.value} value={stage.value}>{stage.label}</option>)}</select></td><td className="muted-cell">{formatDate(lead.created_at)}</td><td><button className="icon-button row-open" aria-label={`Open ${lead.full_name}`} onClick={() => onOpenLead(lead)}><ChevronRight size={17} /></button></td></tr>)}</tbody></table></div>
+    {!leads.length && !loading && <EmptyState title={query || statusFilter ? 'No matching leads' : 'No leads yet'} description={query || statusFilter ? 'Try another search or clear the stage filter.' : 'Your next great client relationship starts here.'} action={!query && !statusFilter ? <button className="button button-primary" onClick={onAddLead}><Plus size={16} /> Add your first lead</button> : undefined} />}
+    {loading && <div className="inline-loading"><span className="spinner" /> Updating your leads…</div>}
+    <div className="table-footnote"><span>Showing the latest {leads.length} leads</span><span>Visibility is managed by your team role</span></div>
+  </section>
+}
+
+function TasksPage({ tasks, filter, setFilter, now, onComplete, onOpenLead }: {
+  tasks: (Task | Dashboard['due_today'][number])[]; filter: 'all' | 'today' | 'overdue'
+  setFilter: (filter: 'all' | 'today' | 'overdue') => void; now: number
+  onComplete: (task: Pick<Task, 'id'>) => void; onOpenLead: (leadId: string) => void
+}) {
+  const filters = [{ id: 'all', label: 'All open' }, { id: 'today', label: 'Due today' }, { id: 'overdue', label: 'Overdue' }] as const
+  return <section className="panel full-panel task-page-panel">
+    <div className="panel-header task-header"><div><p className="eyebrow">A LITTLE NUDGE GOES A LONG WAY</p><h2>Your follow-up list</h2></div><div className="task-filter-pills">{filters.map((item) => <button key={item.id} className={`filter-pill ${filter === item.id ? 'filter-pill-active' : ''}`} onClick={() => setFilter(item.id)}>{item.label}</button>)}</div></div>
+    {tasks.length ? <div className="task-list">{tasks.map((task) => <div className="task-row" key={task.id}><button className="task-check large-check" title="Mark complete" onClick={() => onComplete(task)}><Check size={14} /></button><div className="task-row-main"><strong>{task.title}</strong><button className="task-lead-link" onClick={() => onOpenLead(task.lead_id)}>{'lead_name' in task ? task.lead_name : 'Open lead'}<ArrowUpRight size={12} /></button>{'description' in task && task.description && <span className="task-description">{task.description}</span>}</div><span className="task-assignee"><span className="avatar avatar-xs avatar-user">ME</span>Assigned to you</span><span className={`task-due ${taskIsOverdue(task.due_at, now) ? 'task-time-overdue' : ''}`}><CalendarDays size={15} />{relativeDate(task.due_at)}</span></div>)}</div> : <EmptyState title={filter === 'overdue' ? 'Nothing overdue' : filter === 'today' ? 'Nothing due today' : 'No open follow-ups'} description={filter === 'all' ? 'Create a follow-up from any lead to keep the conversation moving.' : 'You’re all caught up. Keep it that way.'} />}
+    <div className="task-footnote"><Clock3 size={14} /> Dates and due-today boundaries use your team’s configured timezone.</div>
+  </section>
+}
+
+function ActivityPage({ events, unreadCount, onMarkRead }: { events: AuditEvent[]; unreadCount: number; onMarkRead: () => void }) {
+  return <section className="panel full-panel activity-page-panel"><div className="panel-header"><div><p className="eyebrow">SHARED WITH YOUR TEAM</p><h2>The activity feed</h2><p className="panel-subtitle">A clear view of the important changes happening across your workspace.</p></div>{unreadCount > 0 && <button className="button button-secondary" onClick={onMarkRead}><CheckCheck size={16} /> Mark as read</button>}</div>{events.length ? <ActivityList events={events} expanded /> : <EmptyState title="Nothing to report yet" description="Team changes and lead updates will show up here." />}<div className="activity-feed-note"><span className="secure-dot" /> This feed follows your team role and lead access.</div></section>
+}
+
+function ActivityList({ events, expanded = false }: { events: AuditEvent[]; expanded?: boolean }) {
+  return <div className={`activity-list ${expanded ? 'activity-list-expanded' : ''}`}>{events.map((event, index) => <div className="activity-item" key={event.id}><div className={`activity-avatar activity-${index % 4}`}>{event.actor_name ? initials(event.actor_name) : <Sparkles size={14} />}</div><div className="activity-body"><p><strong>{event.actor_name || 'UrbanNest team'}</strong> {event.summary.toLowerCase()}</p>{event.changes && Object.keys(event.changes).length > 0 && <span className="activity-detail">{Object.entries(event.changes).slice(0, 2).map(([key, value]) => `${key.replaceAll('_', ' ')}: ${typeof value === 'object' && value !== null ? JSON.stringify(value) : String(value)}`).join(' · ')}</span>}<time>{relativeDate(event.created_at)}</time></div><span className={`activity-read-dot ${event.is_read ? 'is-read' : ''}`} /></div>)}</div>
+}
+
+function NotificationPanel({ events, unreadCount, onClose, onOpenActivity }: { events: AuditEvent[]; unreadCount: number; onClose: () => void; onOpenActivity: () => void }) {
+  return <><button className="popover-backdrop" aria-label="Close notifications" onClick={onClose} /><section className="notification-panel"><div className="notification-panel-head"><div><strong>Notifications</strong><span>{unreadCount ? `${unreadCount} unread updates` : 'You’re all caught up'}</span></div><button className="icon-button" aria-label="Close notifications" onClick={onClose}><X size={17} /></button></div>{events.length ? <ActivityList events={events.slice(0, 4)} /> : <EmptyState title="No new updates" description="Your team feed is quiet for now." />}<button className="panel-link" onClick={onOpenActivity}>Open activity feed <ArrowUpRight size={14} /></button></section></>
+}
+
+function LeadDrawer({ lead: initialLead, token, onClose, onUpdated, onError }: { lead: Lead; token: string; onClose: () => void; onUpdated: (lead: Lead) => void; onError: (message: string) => void }) {
+  const [lead, setLead] = useState(initialLead)
+  const [activities, setActivities] = useState<Activity[]>([])
+  const [activityText, setActivityText] = useState('')
+  const [activityType, setActivityType] = useState<Activity['type']>('call')
+  const [taskTitle, setTaskTitle] = useState('')
+  const [taskDate, setTaskDate] = useState(() => {
+    const tomorrow = new Date(Date.now() + 86_400_000)
+    return `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, '0')}-${String(tomorrow.getDate()).padStart(2, '0')}T10:00`
+  })
+  const [activeForm, setActiveForm] = useState<'activity' | 'task' | null>(null)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    api<Activity[]>(`/leads/${initialLead.id}/activities?limit=50`, token)
+      .then(setActivities)
+      .catch((requestError: unknown) => onError(getErrorMessage(requestError)))
+  }, [initialLead, onError, token])
+
+  const changeStage = async (status: LeadStatus) => {
+    try {
+      const updated = await api<Lead>(`/leads/${lead.id}`, token, { method: 'PATCH', body: JSON.stringify({ status }) })
+      setLead(updated)
+      onUpdated(updated)
+    } catch (requestError) {
+      onError(getErrorMessage(requestError))
+    }
+  }
+
+  const submitActivity = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setSaving(true)
+    try {
+      const activity = await api<Activity>(`/leads/${lead.id}/activities`, token, { method: 'POST', body: JSON.stringify({ type: activityType, body: activityText }) })
+      setActivities((items) => [activity, ...items])
+      setActivityText('')
+      setActiveForm(null)
+      onError('')
+      onUpdated(lead)
+    } catch (requestError) {
+      onError(getErrorMessage(requestError))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const submitTask = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setSaving(true)
+    try {
+      await api<Task>('/tasks', token, { method: 'POST', body: JSON.stringify({ lead_id: lead.id, title: taskTitle, due_at: new Date(taskDate).toISOString() }) })
+      setTaskTitle('')
+      setActiveForm(null)
+      onError('')
+      onUpdated(lead)
+    } catch (requestError) {
+      onError(getErrorMessage(requestError))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return <><button className="drawer-backdrop" aria-label="Close lead details" onClick={onClose} /><aside className="lead-drawer"><div className="drawer-topbar"><span className="eyebrow">LEAD PROFILE</span><button className="icon-button" aria-label="Close lead details" onClick={onClose}><X size={19} /></button></div><div className="drawer-lead-head"><div className={`avatar avatar-large avatar-${avatarColor(lead.full_name)}`}>{initials(lead.full_name)}</div><div><h2>{lead.full_name}</h2><span className="drawer-subtitle">Added {formatDate(lead.created_at, { day: 'numeric', month: 'long', year: 'numeric' })}</span></div></div>
+    <div className="drawer-stage"><label htmlFor="drawer-status">CURRENT STAGE</label><select id="drawer-status" className={`status-select status-${stageFor(lead.status).tone}`} value={lead.status} onChange={(event) => void changeStage(event.target.value as LeadStatus)}>{stages.map((stage) => <option key={stage.value} value={stage.value}>{stage.label}</option>)}</select></div>
+    <div className="drawer-actions"><button className="button button-secondary" onClick={() => setActiveForm(activeForm === 'activity' ? null : 'activity')}><ActivityIcon size={15} /> Log activity</button><button className="button button-secondary" onClick={() => setActiveForm(activeForm === 'task' ? null : 'task')}><CalendarDays size={15} /> Add follow-up</button></div>
+    {activeForm === 'activity' && <form className="drawer-form" onSubmit={(event) => void submitActivity(event)}><div className="drawer-form-heading"><strong>Log an interaction</strong><button type="button" className="icon-button" aria-label="Close form" onClick={() => setActiveForm(null)}><X size={15} /></button></div><select value={activityType} onChange={(event) => setActivityType(event.target.value as Activity['type'])}><option value="call">Call</option><option value="note">Note</option><option value="site_visit">Site visit</option><option value="email">Email</option><option value="whatsapp">WhatsApp</option></select><textarea value={activityText} onChange={(event) => setActivityText(event.target.value)} placeholder="What happened? Add a useful note…" rows={3} required /><button className="button button-primary" disabled={saving}>{saving ? 'Saving…' : 'Save activity'}</button></form>}
+    {activeForm === 'task' && <form className="drawer-form" onSubmit={(event) => void submitTask(event)}><div className="drawer-form-heading"><strong>Plan a follow-up</strong><button type="button" className="icon-button" aria-label="Close form" onClick={() => setActiveForm(null)}><X size={15} /></button></div><input value={taskTitle} onChange={(event) => setTaskTitle(event.target.value)} placeholder="e.g. Call to confirm site visit" maxLength={200} required /><input type="datetime-local" value={taskDate} onChange={(event) => setTaskDate(event.target.value)} required /><button className="button button-primary" disabled={saving}>{saving ? 'Saving…' : 'Create follow-up'}</button></form>}
+    <div className="detail-section"><p className="eyebrow">WHAT THEY’RE LOOKING FOR</p><div className="detail-cards"><div className="detail-card"><span>Budget</span><strong>{budgetRange(lead)}</strong></div><div className="detail-card"><span>Configuration</span><strong>{lead.bhk ? `${lead.bhk} BHK` : 'Not specified'}</strong></div></div><div className="detail-location"><MapPin size={16} /><span>{lead.preferred_location || 'Preferred location not specified'}</span></div></div>
+    <div className="detail-section contact-section"><p className="eyebrow">CONTACT DETAILS</p>{lead.email && <a href={`mailto:${lead.email}`}><span className="contact-icon">@</span>{lead.email}<ArrowUpRight size={13} /></a>}{lead.phone && <a href={`tel:${lead.phone}`}><span className="contact-icon">#</span>{lead.phone}<ArrowUpRight size={13} /></a>}{!lead.email && !lead.phone && <span className="empty-contact">No contact details added.</span>}<div className="contact-source">Source <strong>{sourceLabels[lead.source]}</strong></div></div>
+    <div className="detail-section timeline-section"><div className="timeline-head"><div><p className="eyebrow">THE STORY SO FAR</p><h3>Timeline</h3></div><span className="timeline-count">{activities.length}</span></div>{activities.length ? <div className="timeline-list">{activities.map((activity) => <div className="timeline-item" key={activity.id}><span className="timeline-dot" /><div><strong>{activity.type.replaceAll('_', ' ')}</strong><p>{activity.body}</p><time>{relativeDate(activity.occurred_at)}</time></div></div>)}</div> : <p className="timeline-empty">No activity yet. Log a call or note to start the story.</p>}</div>
+  </aside></>
+}
+
+function CreateLeadModal({ token, currentUser, onClose, onCreated, onError }: { token: string; currentUser: User; onClose: () => void; onCreated: (lead: Lead) => void; onError: (message: string) => void }) {
+  const [form, setForm] = useState({ full_name: '', email: '', phone: '', source: 'manual' as LeadSource, status: 'new' as LeadStatus, budget_min_inr: '', budget_max_inr: '', bhk: '', preferred_location: '', notes: '' })
+  const [saving, setSaving] = useState(false)
+
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setSaving(true)
+    onError('')
+    const payload = {
+      ...form,
+      email: form.email || null,
+      phone: form.phone || null,
+      budget_min_inr: form.budget_min_inr ? Number(form.budget_min_inr) : null,
+      budget_max_inr: form.budget_max_inr ? Number(form.budget_max_inr) : null,
+      bhk: form.bhk ? Number(form.bhk) : null,
+      notes: form.notes || null,
+      assigned_to: currentUser.role === 'agent' ? currentUser.id : undefined,
+    }
+    try {
+      const lead = await api<Lead>('/leads', token, { method: 'POST', body: JSON.stringify(payload) })
+      onCreated(lead)
+    } catch (requestError) {
+      onError(getErrorMessage(requestError))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const update = (key: keyof typeof form, value: string) => setForm((current) => ({ ...current, [key]: value }))
+
+  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}><section className="create-modal" role="dialog" aria-modal="true" aria-labelledby="create-lead-title"><div className="modal-header"><div><span className="eyebrow">A NEW RELATIONSHIP</span><h2 id="create-lead-title">Add a lead<span className="heading-period">.</span></h2></div><button className="icon-button" aria-label="Close" onClick={onClose}><X size={19} /></button></div><form className="lead-form" onSubmit={(event) => void submit(event)}><label className="form-span">Full name<input autoFocus value={form.full_name} onChange={(event) => update('full_name', event.target.value)} placeholder="e.g. Aanya Mehta" maxLength={160} required /></label><label>Email address<input type="email" value={form.email} onChange={(event) => update('email', event.target.value)} placeholder="aanya@example.com" /></label><label>Phone number<input type="tel" value={form.phone} onChange={(event) => update('phone', event.target.value)} placeholder="+91 98765 43210" /></label><label>Preferred location<input value={form.preferred_location} onChange={(event) => update('preferred_location', event.target.value)} placeholder="Baner, Pune" maxLength={160} /></label><label>Lead source<select value={form.source} onChange={(event) => update('source', event.target.value)}>{Object.entries(sourceLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><label>Pipeline stage<select value={form.status} onChange={(event) => update('status', event.target.value)}>{stages.map((stage) => <option key={stage.value} value={stage.value}>{stage.label}</option>)}</select></label><label>BHK<input type="number" min="1" max="20" value={form.bhk} onChange={(event) => update('bhk', event.target.value)} placeholder="2" /></label><label>Budget from (₹)<input type="number" min="0" value={form.budget_min_inr} onChange={(event) => update('budget_min_inr', event.target.value)} placeholder="6000000" /></label><label>Budget up to (₹)<input type="number" min="0" value={form.budget_max_inr} onChange={(event) => update('budget_max_inr', event.target.value)} placeholder="9000000" /></label><label className="form-span">Notes<textarea value={form.notes} onChange={(event) => update('notes', event.target.value)} placeholder="What would be helpful to remember?" rows={3} /></label><div className="form-span form-footer"><span className="form-hint">Keep contact details accurate and use fictional data for demos.</span><div><button type="button" className="button button-secondary" onClick={onClose}>Cancel</button><button className="button button-primary" disabled={saving}>{saving ? 'Saving…' : 'Save lead'}<ArrowUpRight size={16} /></button></div></div></form></section></div>
+}
+
+function EmptyState({ title, description, action }: { title: string; description: string; action?: React.ReactNode }) {
+  return <div className="empty-state"><div className="empty-icon"><Sparkles size={19} /></div><strong>{title}</strong><p>{description}</p>{action}</div>
+}
+
+function StatusPill({ status }: { status: LeadStatus }) {
+  const stage = stageFor(status)
+  return <span className={`status-pill pill-${stage.tone}`}><i />{stage.label}</span>
+}
+
+function avatarColor(name: string) {
+  const colors = ['peach', 'blue', 'green', 'lavender', 'yellow']
+  return colors[name.charCodeAt(0) % colors.length]
+}
+
+export default App

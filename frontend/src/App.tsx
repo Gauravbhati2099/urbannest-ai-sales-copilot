@@ -1043,8 +1043,43 @@ function LeadDrawer({ lead: initialLead, token, onClose, onUpdated, onError }: {
     {activeForm === 'task' && <form className="drawer-form" onSubmit={(event) => void submitTask(event)}><div className="drawer-form-heading"><strong>Plan a follow-up</strong><button type="button" className="icon-button" aria-label="Close form" onClick={() => setActiveForm(null)}><X size={15} /></button></div><input value={taskTitle} onChange={(event) => setTaskTitle(event.target.value)} placeholder="e.g. Call to confirm site visit" maxLength={200} required /><input type="datetime-local" value={taskDate} onChange={(event) => setTaskDate(event.target.value)} required /><button className="button button-primary" disabled={saving}>{saving ? 'Saving…' : 'Create follow-up'}</button></form>}
     <div className="detail-section"><p className="eyebrow">WHAT THEY’RE LOOKING FOR</p><div className="detail-cards"><div className="detail-card"><span>Budget</span><strong>{budgetRange(lead)}</strong></div><div className="detail-card"><span>Configuration</span><strong>{lead.bhk ? `${lead.bhk} BHK` : 'Not specified'}</strong></div></div><div className="detail-location"><MapPin size={16} /><span>{lead.preferred_location || 'Preferred location not specified'}</span></div></div>
     <div className="detail-section contact-section"><p className="eyebrow">CONTACT DETAILS</p>{lead.email && <a href={`mailto:${lead.email}`}><span className="contact-icon">@</span>{lead.email}<ArrowUpRight size={13} /></a>}{lead.phone && <a href={`tel:${lead.phone}`}><span className="contact-icon">#</span>{lead.phone}<ArrowUpRight size={13} /></a>}{!lead.email && !lead.phone && <span className="empty-contact">No contact details added.</span>}<div className="contact-source">Source <strong>{sourceLabels[lead.source]}</strong></div></div>
+    <AICopilotPreview lead={lead} />
     <div className="detail-section timeline-section"><div className="timeline-head"><div><p className="eyebrow">THE STORY SO FAR</p><h3>Timeline</h3></div><span className="timeline-count">{activities.length}</span></div>{activities.length ? <div className="timeline-list">{activities.map((activity) => <div className="timeline-item" key={activity.id}><span className="timeline-dot" /><div><strong>{activity.type.replaceAll('_', ' ')}</strong><p>{activity.body}</p><time>{relativeDate(activity.occurred_at)}</time></div></div>)}</div> : <p className="timeline-empty">No activity yet. Log a call or note to start the story.</p>}</div>
   </aside></>
+}
+
+function AICopilotPreview({ lead }: { lead: Lead }) {
+  return <section className="detail-section ai-copilot-section" aria-labelledby="ai-copilot-title">
+    <div className="ai-copilot-heading">
+      <div><p className="eyebrow">AI SALES COPILOT</p><h3 id="ai-copilot-title">AI tools</h3></div>
+      <span className="ai-preview-badge"><Sparkles size={12} /> Preview</span>
+    </div>
+    <p className="ai-preview-note">These controls are a UI preview. AI inference will be connected in a later phase.</p>
+    <article className="ai-score-card">
+      <div className="ai-score-gauge" aria-label="No lead score yet">—</div>
+      <div className="ai-score-copy"><strong>Lead score</strong><span>No score yet</span><small>A priority score and explanation will appear here.</small></div>
+      <button className="button button-secondary ai-disabled-action" type="button" disabled title="AI inference will be connected later">Score</button>
+    </article>
+    <details className="ai-feature-card">
+      <summary><Sparkles size={15} /><span><strong>Draft a follow-up</strong><small>Personalized WhatsApp or email message</small></span><span className="ai-feature-state">Later</span></summary>
+      <div className="ai-feature-content">
+        <div className="ai-control-row">
+          <label>Channel<select disabled defaultValue="whatsapp"><option value="whatsapp">WhatsApp</option><option value="email">Email</option></select></label>
+          <label>Tone<select disabled defaultValue="friendly"><option value="professional">Professional</option><option value="friendly">Friendly</option><option value="concise">Concise</option><option value="warm">Warm</option></select></label>
+        </div>
+        <textarea disabled rows={3} placeholder="An editable message draft will appear here." aria-label="Message draft preview" />
+        <button className="button button-secondary ai-disabled-action" type="button" disabled>Generate draft</button>
+      </div>
+    </details>
+    <details className="ai-feature-card">
+      <summary><Sparkles size={15} /><span><strong>Turn notes into CRM data</strong><small>Extract preferences and a suggested follow-up</small></span><span className="ai-feature-state">Later</span></summary>
+      <div className="ai-feature-content">
+        <label className="ai-note-label">Lead notes<textarea readOnly rows={3} value={lead.notes ?? ''} placeholder="Add a note to this lead first." /></label>
+        <div className="ai-extraction-preview"><span>Budget <strong>Not extracted</strong></span><span>Bedrooms <strong>Not extracted</strong></span><span>Location <strong>Not extracted</strong></span><span>Next follow-up <strong>Not extracted</strong></span></div>
+        <button className="button button-secondary ai-disabled-action" type="button" disabled>Extract details</button>
+      </div>
+    </details>
+  </section>
 }
 
 function CreateLeadModal({ token, currentUser, onClose, onCreated, onError }: { token: string; currentUser: User; onClose: () => void; onCreated: (lead: Lead) => void; onError: (message: string) => void }) {

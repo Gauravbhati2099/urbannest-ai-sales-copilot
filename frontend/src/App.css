@@ -326,6 +326,7 @@ h1, h2, h3, p { margin-top: 0; }
 .confirmation-icon { width: 38px; height: 38px; display: grid; place-items: center; margin-bottom: 14px; border-radius: 10px; color: #aa674e; background: #fbf0e9; }
 .confirmation-dialog h2 { margin: 0; color: #304337; font: 700 17px 'Manrope', sans-serif; }
 .confirmation-dialog p { margin: 8px 0 20px; color: #78867d; font-size: 12px; line-height: 1.6; }
+.confirmation-dialog .confirmation-error { margin: -8px 0 16px; color: #a64f43; font-size: 11px; }
 .confirmation-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .button-danger { border-color: #a64f43; color: #fff; background: #a64f43; }
 .button-danger:hover:not(:disabled) { border-color: #8c3d33; background: #8c3d33; }
@@ -599,6 +600,7 @@ h1, h2, h3, p { margin-top: 0; }
 }
 :root[data-theme='dark'] .confirmation-dialog h2 { color: #e3ece5; }
 :root[data-theme='dark'] .confirmation-dialog p { color: #a4b2a8; }
+:root[data-theme='dark'] .confirmation-dialog .confirmation-error { color: #f0b5a9; }
 :root[data-theme='dark'] .confirmation-icon { color: #f0b5a9; background: #392722; }
 :root[data-theme='dark'] .auth-main { color: #dce7df; background: #1a2720; }
 :root[data-theme='dark'] .auth-page { background: #121a16; }
@@ -799,6 +801,8 @@ h1, h2, h3, p { margin-top: 0; }
 .profile-details > div { display: flex; justify-content: space-between; gap: 12px; padding: 11px 0; border-top: 1px solid var(--line); font-size: 10px; }
 .profile-details dt { color: #8b9990; }
 .profile-details dd { max-width: 65%; margin: 0; overflow-wrap: anywhere; color: #516258; text-align: right; }
+.profile-phone-form { grid-column: 1 / -1; grid-template-columns: minmax(0, 1fr) auto; align-items: end; margin-top: 4px; padding-top: 14px; border-top: 1px solid var(--line); }
+.profile-phone-form .button { margin: 0; }
 .password-panel .panel-header { align-items: flex-start; }
 .password-panel .panel-header > svg { flex: none; color: var(--discordant); }
 .account-form { display: grid; gap: 12px; }
@@ -810,6 +814,8 @@ h1, h2, h3, p { margin-top: 0; }
 .inline-form-error { margin: 0; color: #bc5948; font-size: 10px; }
 .team-page-panel { padding: 22px; }
 .team-header { align-items: flex-start; }
+.team-header-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.team-header-actions .button-danger { font-size: 9px; }
 .team-member-list { display: grid; margin-top: 8px; }
 .team-member-row { min-width: 0; display: grid; grid-template-columns: auto minmax(130px, 1fr) minmax(94px, auto) minmax(64px, auto) auto; align-items: center; gap: 13px; padding: 13px 0; border-bottom: 1px solid var(--line); }
 .team-member-identity { min-width: 0; display: grid; gap: 4px; }
@@ -917,4 +923,6 @@ select option { color: #23322d; background: #fff; }
   .team-member-row > .member-actions { grid-column: 2 / -1; justify-self: start; }
   .team-create-form { grid-template-columns: 1fr; }
   .team-header { align-items: flex-start; }
-}
+  .team-header-actions { justify-content: flex-start; }
+  .profile-phone-form { grid-template-columns: 1fr; }
+  }

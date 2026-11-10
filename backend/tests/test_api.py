@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import csv
+import io
 import os
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -473,6 +475,150 @@ class APIAuthAndAuthorizationTests(unittest.TestCase):
         )
         self.assertEqual(temp_login.status_code, 200)
         self.assertTrue(temp_login.json()["user"]["must_change_password"])
+
+    def test_owner_can_reset_all_team_accounts_and_download_temporary_passwords(self) -> None:
+        owner_token = self.login("owner@example.test")
+        manager_token = self.login("manager@example.test")
+        agent_token = self.login("agent@example.test")
+        with self.session_factory.begin() as session:
+            manager = session.get(User, self.manager_id)
+            assert manager is not None
+            manager.phone = "+91 98765 43210"
+            inactive = session.get(User, self.inactive_user_id)
+            assert inactive is not None
+            inactive.full_name = "=Inactive account"
+        denied = self.client.post(
+            "/api/v1/users/password-reset-all",
+            headers=self.headers("manager@example.test"),
+            json={"confirmation": "RESET ALL"},
+        )
+        self.assertEqual(denied.status_code, 403)
+
+        missing_confirmation = self.client.post(
+            "/api/v1/users/password-reset-all",
+            headers=self.headers("owner@example.test"),
+            json={"confirmation": "RESET"},
+        )
+        self.assertEqual(missing_confirmation.status_code, 422)
+
+        response = self.client.post(
+            "/api/v1/users/password-reset-all",
+            headers=self.headers("owner@example.test"),
+            json={"confirmation": "RESET ALL"},
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn("text/csv", response.headers["content-type"])
+        self.assertIn("no-store", response.headers["cache-control"])
+        self.assertIn("attachment;", response.headers["content-disposition"])
+
+        rows = list(csv.DictReader(io.StringIO(response.content.decode("utf-8-sig"))))
+        expected_user_ids = {
+            str(self.owner_id),
+            str(self.manager.id),
+            str(self.agent_id),
+            str(self.other_agent_id),
+            str(self.inactive_user_id),
+        }
+        self.assertEqual({row["user_id"] for row in rows}, expected_user_ids)
+        self.assertNotIn(str(self.external_agent_id), {row["user_id"] for row in rows})
+        self.assertTrue(all(row["temporary_password"] for row in rows))
+        manager_row = next(row for row in rows if row["user_id"] == str(self.manager_id))
+        self.assertEqual(manager_row["email"], "manager@example.test")
+        self.assertEqual(manager_row["phone"], "'+91 98765 43210")
+        self.assertEqual(manager_row["role"], "manager")
+        self.assertEqual(
+            next(
+                row["full_name"]
+                for row in rows
+                if row["user_id"] == str(self.inactive_user_id)
+            ),
+            "'=Inactive account",
+        )
+
+        with self.session_factory() as session:
+            for row in rows:
+                user = session.get(User, UUID(row["user_id"]))
+                assert user is not None
+                self.assertTrue(user.must_change_password)
+                self.assertEqual(row["role"], user.role.value)
+                self.assertTrue(password_hash.verify(row["temporary_password"], user.password_hash))
+            audit_events = session.scalars(
+                select(AuditEvent).where(
+                    AuditEvent.action == "password_reset",
+                    AuditEvent.team_id == self.team.id,
+                )
+            ).all()
+            self.assertEqual(len(audit_events), len(expected_user_ids))
+            self.assertTrue(all(event.changes is None for event in audit_events))
+
+        self.assertEqual(
+            self.client.get(
+                "/api/v1/auth/me",
+                headers={"Authorization": f"Bearer {owner_token}"},
+            ).status_code,
+            401,
+        )
+        owner_temporary_password = next(
+            row["temporary_password"]
+            for row in rows
+            if row["user_id"] == str(self.owner_id)
+        )
+        owner_login = self.client.post(
+            "/api/v1/auth/login",
+            json={
+                "email": "owner@example.test",
+                "password": owner_temporary_password,
+            },
+        )
+        self.assertEqual(owner_login.status_code, 200, owner_login.text)
+        self.assertTrue(owner_login.json()["user"]["must_change_password"])
+        self.assertEqual(
+            self.client.get(
+                "/api/v1/auth/me",
+                headers={"Authorization": f"Bearer {manager_token}"},
+            ).status_code,
+            401,
+        )
+        self.assertEqual(
+            self.client.get(
+                "/api/v1/auth/me",
+                headers={"Authorization": f"Bearer {agent_token}"},
+            ).status_code,
+            401,
+        )
+
+    def test_user_can_update_and_clear_only_their_own_phone_number(self) -> None:
+        headers = self.headers("agent@example.test")
+        response = self.client.patch(
+            "/api/v1/auth/me/profile",
+            headers=headers,
+            json={"phone": " +91 98765 43210 "},
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["phone"], "+91 98765 43210")
+        self.assertEqual(response.json()["email"], "agent@example.test")
+
+        feed = self.client.get("/api/v1/audit/events", headers=headers)
+        profile_event = next(
+            event for event in feed.json()["events"] if event["action"] == "profile_updated"
+        )
+        self.assertEqual(profile_event["changes"], {"phone": {"changed": True}})
+        self.assertNotIn("+91", str(profile_event["changes"]))
+
+        cleared = self.client.patch(
+            "/api/v1/auth/me/profile",
+            headers=headers,
+            json={"phone": None},
+        )
+        self.assertEqual(cleared.status_code, 200, cleared.text)
+        self.assertIsNone(cleared.json()["phone"])
+
+        empty_update = self.client.patch(
+            "/api/v1/auth/me/profile",
+            headers=headers,
+            json={},
+        )
+        self.assertEqual(empty_update.status_code, 422)
 
     def test_only_owner_can_change_roles_and_last_active_owner_is_protected(self) -> None:
         manager_denied = self.client.patch(

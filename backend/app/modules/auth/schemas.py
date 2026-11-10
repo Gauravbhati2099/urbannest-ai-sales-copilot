@@ -30,6 +30,7 @@ class UserRead(BaseModel):
     team_id: UUID
     full_name: str
     email: str
+    phone: str | None
     role: UserRole
     is_active: bool
     must_change_password: bool
@@ -96,6 +97,26 @@ class UserUpdateRequest(BaseModel):
         if not normalized:
             raise ValueError("Name must not be blank")
         return normalized
+
+
+class ProfileUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    phone: str | None = Field(default=None, max_length=32)
+
+    @field_validator("phone")
+    @classmethod
+    def normalize_phone(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
+
+
+class BulkPasswordResetRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    confirmation: str = Field(pattern=r"^RESET ALL$")
 
 
 class UserCreatedResponse(BaseModel):

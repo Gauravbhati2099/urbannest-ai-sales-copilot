@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import csv
+import io
 import secrets
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi.responses import Response
 from pwdlib import PasswordHash
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -20,9 +23,11 @@ from app.core.security import create_access_token
 from app.db.models import AuditVisibility, Team, User, UserRole
 from app.modules.auth.schemas import (
     ChangePasswordRequest,
+    BulkPasswordResetRequest,
     LoginRequest,
     LoginResponse,
     PasswordResetResponse,
+    ProfileUpdateRequest,
     UserCreatedResponse,
     UserCreateRequest,
     UserRead,
@@ -39,6 +44,12 @@ MANAGER_ROLES = {UserRole.OWNER, UserRole.MANAGER}
 
 def _not_found() -> HTTPException:
     return HTTPException(status_code=404, detail="User not found")
+
+
+def _csv_safe_cell(value: str) -> str:
+    if value.lstrip().startswith(("=", "+", "-", "@")):
+        return f"'{value}"
+    return value
 
 
 def _managed_user(
@@ -165,6 +176,34 @@ def change_password(
 
 @router.get("/me", response_model=UserRead)
 def read_current_user(current_user: CurrentUser) -> UserRead:
+    return UserRead.model_validate(current_user)
+
+
+@router.patch("/me/profile", response_model=UserRead)
+def update_current_profile(
+    payload: ProfileUpdateRequest,
+    current_user: CurrentUser,
+    session: DatabaseSession,
+) -> UserRead:
+    changes = payload.model_dump(exclude_unset=True)
+    if not changes:
+        raise HTTPException(status_code=422, detail="Provide at least one field to update")
+    if current_user.phone != changes["phone"]:
+        current_user.phone = changes["phone"]
+        record_audit_event(
+            session,
+            team_id=current_user.team_id,
+            actor_id=current_user.id,
+            lead_id=None,
+            entity_type="user",
+            entity_id=current_user.id,
+            action="profile_updated",
+            visibility=AuditVisibility.ACTOR,
+            summary="Your profile was updated",
+            changes={"phone": {"changed": True}},
+        )
+        session.commit()
+        session.refresh(current_user)
     return UserRead.model_validate(current_user)
 
 
@@ -343,4 +382,78 @@ def reset_user_password(
     return PasswordResetResponse(
         user_id=user.id,
         temporary_password=temporary_password,
+    )
+
+
+@users_router.post("/password-reset-all", response_class=Response)
+def reset_all_team_passwords(
+    payload: BulkPasswordResetRequest,
+    current_user: CurrentUser,
+    session: DatabaseSession,
+) -> Response:
+    if current_user.role is not UserRole.OWNER:
+        raise HTTPException(
+            status_code=403,
+            detail="Only owners may reset all team passwords",
+        )
+    if payload.confirmation != "RESET ALL":
+        raise HTTPException(status_code=422, detail='Type "RESET ALL" to confirm')
+
+    users = list(
+        session.scalars(
+            select(User)
+            .where(User.team_id == current_user.team_id)
+            .order_by(User.full_name, User.email)
+        ).all()
+    )
+    output = io.StringIO(newline="")
+    writer = csv.writer(output)
+    writer.writerow(
+        [
+            "user_id",
+            "full_name",
+            "email",
+            "phone",
+            "role",
+            "is_active",
+            "temporary_password",
+        ]
+    )
+    for user in users:
+        temporary_password = secrets.token_urlsafe(24)
+        user.password_hash = password_hash.hash(temporary_password)
+        user.auth_version += 1
+        user.must_change_password = True
+        record_audit_event(
+            session,
+            team_id=user.team_id,
+            actor_id=current_user.id,
+            lead_id=None,
+            entity_type="user",
+            entity_id=user.id,
+            action="password_reset",
+            visibility=AuditVisibility.ADMIN,
+            summary="A team user's password was reset",
+        )
+        values = (
+            str(user.id),
+            user.full_name,
+            user.email,
+            user.phone or "",
+            user.role.value,
+            "true" if user.is_active else "false",
+            temporary_password,
+        )
+        writer.writerow([_csv_safe_cell(value) for value in values])
+    session.commit()
+
+    return Response(
+        content=output.getvalue().encode("utf-8-sig"),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": 'attachment; filename="urbannest-password-resets.csv"',
+            "Cache-Control": "no-store, private",
+            "Pragma": "no-cache",
+            "X-Content-Type-Options": "nosniff",
+        },
     )

@@ -26,12 +26,14 @@ from a browser are never trusted and deactivated accounts are rejected.
 | Method | Path | Access / behavior |
 |---|---|---|
 | `POST` | `/api/v1/auth/login` | Public; email/password login |
-| `GET` | `/api/v1/auth/me` | Authenticated user's current profile and role |
+| `GET` | `/api/v1/auth/me` | Authenticated user's current profile, email, optional phone, and role |
+| `PATCH` | `/api/v1/auth/me/profile` | Authenticated user updates or clears their own optional phone number |
 | `POST` | `/api/v1/auth/change-password` | Authenticated; verifies current password, changes password and invalidates prior tokens |
 | `GET` | `/api/v1/users` | Owner/manager team roster; manager sees agents only; supports pagination and active filter |
 | `POST` | `/api/v1/users` | Owner can provision team roles; manager can provision agents; returns one-time temporary password |
 | `PATCH` | `/api/v1/users/{user_id}` | Owner can change roles/status; manager can update/deactivate agents only |
 | `POST` | `/api/v1/users/{user_id}/password-reset` | Owner/manager issues one-time temporary password; all existing sessions are revoked |
+| `POST` | `/api/v1/users/password-reset-all` | Owner only; requires `{"confirmation":"RESET ALL"}`, resets every team account (including inactive and owner accounts), and returns a no-store CSV with one-time temporary passwords and roles |
 | `GET` | `/api/v1/audit/events` | Paginated shared audit feed; event visibility is filtered by role and accessible leads |
 | `GET` | `/api/v1/audit/unread-count` | Current user's unread count within their authorized audit feed |
 | `POST` | `/api/v1/audit/read` | Moves only the caller's read cursor; audit events remain shared |
@@ -94,6 +96,15 @@ token. Password reset, password change, role changes, and deactivation revoke
 previous access tokens. The API prevents deactivating or demoting the team's
 last active owner. Passwords are hashed with Argon2; store temporary
 credentials securely and do not send them over an untrusted channel.
+
+The owner-only bulk reset endpoint is intentionally destructive: it rotates
+credentials and invalidates sessions for every account in the owner's team.
+The response contains newly generated temporary passwords exactly once; it
+never returns existing passwords. The frontend requires confirmation, downloads
+the CSV without storing it in the application, and signs the owner out. Keep
+the downloaded file private, distribute credentials securely, and delete the
+file when it is no longer needed. Each user must change their temporary
+password before using CRM data.
 
 The assessment has no email provider configured, so self-service email reset
 links are not available. This admin-issued reset is the recovery path.

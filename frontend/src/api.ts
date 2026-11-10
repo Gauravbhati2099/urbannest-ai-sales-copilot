@@ -11,6 +11,7 @@ export interface User {
   team_id: string
   full_name: string
   email: string
+  phone: string | null
   role: UserRole
   is_active: boolean
   must_change_password: boolean
@@ -122,6 +123,10 @@ export interface UserUpdateRequest {
   is_active?: boolean
 }
 
+export interface ProfileUpdateRequest {
+  phone: string | null
+}
+
 export interface UserCreatedResponse {
   user: User
   temporary_password: string
@@ -189,4 +194,35 @@ export async function api<T>(path: string, token: string, init: RequestInit = {}
 
   if (response.status === 204) return undefined as T
   return response.json() as Promise<T>
+}
+
+export async function downloadAllPasswordResetCsv(token: string): Promise<Blob> {
+  let response: Response
+  try {
+    response = await fetch(`${API_PREFIX}/users/password-reset-all`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ confirmation: 'RESET ALL' }),
+      cache: 'no-store',
+    })
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') throw error
+    throw new Error('Can’t reach the API. Check your connection and the API CORS settings.')
+  }
+
+  if (!response.ok) {
+    let message = `Request failed (${response.status})`
+    try {
+      const body: unknown = await response.json()
+      if (isRecord(body) && 'detail' in body) message = formatApiDetail(body.detail, response.status)
+    } catch {
+      // Some platform errors return an empty or non-JSON response.
+    }
+    throw new Error(message)
+  }
+
+  return response.blob()
 }

@@ -119,7 +119,8 @@ export async function api<T>(path: string, token: string, init: RequestInit = {}
   let response: Response
   try {
     response = await fetch(`${API_PREFIX}${path}`, { ...init, headers })
-  } catch {
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') throw error
     throw new Error('Can’t reach the API. Check your connection and the API CORS settings.')
   }
 

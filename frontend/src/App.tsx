@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type FormEvent } from 'react'
 import {
   Activity as ActivityIcon,
   ArrowDownRight,
@@ -15,11 +15,13 @@ import {
   LogOut,
   MapPin,
   Menu,
+  Moon,
   Plus,
   RefreshCw,
   Search,
   SlidersHorizontal,
   Sparkles,
+  Sun,
   Upload,
   Users,
   X,
@@ -38,9 +40,11 @@ import {
   type Task,
   type User,
 } from './api'
+import { initialWorkspaceState, workspaceReducer } from './workspace-state'
 import './App.css'
 
 type Page = 'overview' | 'leads' | 'tasks' | 'activity'
+type Theme = 'light' | 'dark'
 
 const stages: { value: LeadStatus; label: string; tone: string }[] = [
   { value: 'new', label: 'New', tone: 'slate' },
@@ -120,26 +124,61 @@ function getErrorMessage(error: unknown) {
 function App() {
   const [token, setToken] = useState(() => sessionStorage.getItem('urbannest_token') ?? '')
   const [renderTime] = useState(() => new Date())
+  const [theme, setTheme] = useState<Theme>(() => localStorage.getItem('urbannest_theme') === 'dark' ? 'dark' : 'light')
+  const leadSearchRef = useRef<HTMLInputElement>(null)
+  const refreshControllerRef = useRef<AbortController | null>(null)
   const [user, setUser] = useState<User | null>(null)
   const [authReady, setAuthReady] = useState(() => !sessionStorage.getItem('urbannest_token'))
   const [page, setPage] = useState<Page>('overview')
-  const [dashboard, setDashboard] = useState<Dashboard | null>(null)
-  const [leads, setLeads] = useState<Lead[]>([])
-  const [tasks, setTasks] = useState<Task[]>([])
-  const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([])
-  const [unreadCount, setUnreadCount] = useState(0)
+  const [workspace, dispatch] = useReducer(workspaceReducer, initialWorkspaceState)
+  const { dashboard, leads, tasks, auditEvents, unreadCount, loading, error, apiConnected, importErrors } = workspace
   const [query, setQuery] = useState('')
+  const [debouncedQuery, setDebouncedQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const [taskFilter, setTaskFilter] = useState<'all' | 'today' | 'overdue'>('all')
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null)
   const [showCreateLead, setShowCreateLead] = useState(false)
   const [showNotifications, setShowNotifications] = useState(false)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
-  const [apiConnected, setApiConnected] = useState(false)
-  const [importErrors, setImportErrors] = useState<CSVImportResult['errors']>([])
+  const setError = useCallback((message: string) => {
+    dispatch(message ? { type: 'error-set', error: message } : { type: 'error-cleared' })
+  }, [])
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+    document.documentElement.style.colorScheme = theme
+    localStorage.setItem('urbannest_theme', theme)
+  }, [theme])
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedQuery(query.trim()), 250)
+    return () => window.clearTimeout(timer)
+  }, [query])
+
+  useEffect(() => () => refreshControllerRef.current?.abort(), [])
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setSelectedLead(null)
+        setShowCreateLead(false)
+        setShowNotifications(false)
+        setMobileNavOpen(false)
+      }
+
+      const target = event.target
+      const isEditing = target instanceof HTMLElement
+        && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))
+      if (event.key === '/' && page === 'leads' && !isEditing) {
+        event.preventDefault()
+        leadSearchRef.current?.focus()
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [page])
 
   const setSession = useCallback((response: LoginResponse) => {
     sessionStorage.setItem('urbannest_token', response.access_token)
@@ -152,10 +191,8 @@ function App() {
     setToken('')
     setUser(null)
     setAuthReady(true)
-    setDashboard(null)
-    setLeads([])
-    setTasks([])
-    setAuditEvents([])
+    refreshControllerRef.current?.abort()
+    dispatch({ type: 'session-cleared' })
     setPage('overview')
   }, [])
 
@@ -181,31 +218,36 @@ function App() {
 
   const refresh = useCallback(async () => {
     if (!token) return
-    setLoading(true)
-    setError('')
+    refreshControllerRef.current?.abort()
+    const controller = new AbortController()
+    refreshControllerRef.current = controller
+    dispatch({ type: 'refresh-started' })
     try {
       const params = new URLSearchParams({ limit: '100' })
-      if (query.trim()) params.set('q', query.trim())
+      if (debouncedQuery) params.set('q', debouncedQuery)
       if (statusFilter) params.set('status', statusFilter)
+      const requestOptions = { signal: controller.signal }
       const [summary, leadRows, taskRows, feed] = await Promise.all([
-        api<Dashboard>('/dashboard/summary', token),
-        api<Lead[]>(`/leads?${params.toString()}`, token),
-        api<Task[]>('/tasks?limit=100', token),
-        api<{ events: AuditEvent[]; unread_count: number }>('/audit/events?limit=8', token),
+        api<Dashboard>('/dashboard/summary', token, requestOptions),
+        api<Lead[]>(`/leads?${params.toString()}`, token, requestOptions),
+        api<Task[]>('/tasks?limit=100', token, requestOptions),
+        api<{ events: AuditEvent[]; unread_count: number }>('/audit/events?limit=8', token, requestOptions),
       ])
-      setDashboard(summary)
-      setLeads(leadRows)
-      setTasks(taskRows)
-      setAuditEvents(feed.events)
-      setUnreadCount(feed.unread_count)
-      setApiConnected(true)
+      dispatch({
+        type: 'refresh-succeeded',
+        dashboard: summary,
+        leads: leadRows,
+        tasks: taskRows,
+        events: feed.events,
+        unreadCount: feed.unread_count,
+      })
     } catch (requestError) {
-      setApiConnected(false)
-      setError(getErrorMessage(requestError))
+      if (requestError instanceof DOMException && requestError.name === 'AbortError') return
+      dispatch({ type: 'refresh-failed', error: getErrorMessage(requestError) })
     } finally {
-      setLoading(false)
+      if (refreshControllerRef.current === controller) refreshControllerRef.current = null
     }
-  }, [query, statusFilter, token])
+  }, [debouncedQuery, statusFilter, token])
 
   useEffect(() => {
     // eslint-disable-next-line react/set-state-in-effect -- Synchronizes server data with auth and search filters.
@@ -235,7 +277,7 @@ function App() {
       await refresh()
       if (selectedLead?.id === lead.id) setSelectedLead({ ...lead, status })
     } catch (requestError) {
-      setError(getErrorMessage(requestError))
+      dispatch({ type: 'request-failed', error: getErrorMessage(requestError) })
     }
   }
 
@@ -246,11 +288,10 @@ function App() {
         body: JSON.stringify({ status: 'completed' }),
       })
       setNotice('Follow-up marked complete.')
+      dispatch({ type: 'request-succeeded' })
       await refresh()
-      setApiConnected(true)
     } catch (requestError) {
-      setApiConnected(false)
-      setError(getErrorMessage(requestError))
+      dispatch({ type: 'request-failed', error: getErrorMessage(requestError) })
     }
   }
 
@@ -272,7 +313,7 @@ function App() {
     formData.append('file', file)
     try {
       const result = await api<CSVImportResult>('/leads/import', token, { method: 'POST', body: formData })
-      setImportErrors(result.errors)
+      dispatch({ type: 'import-succeeded', errors: result.errors })
       setNotice(`Imported ${result.created_count} lead${result.created_count === 1 ? '' : 's'}${result.rejected_count ? `; ${result.rejected_count} row${result.rejected_count === 1 ? '' : 's'} need attention` : ''}.`)
       await refresh()
     } catch (requestError) {
@@ -283,8 +324,7 @@ function App() {
   const markRead = async () => {
     try {
       await api('/audit/read', token, { method: 'POST' })
-      setUnreadCount(0)
-      setAuditEvents((events) => events.map((event) => ({ ...event, is_read: true })))
+      dispatch({ type: 'read-marked' })
     } catch (requestError) {
       setError(getErrorMessage(requestError))
     }
@@ -300,11 +340,11 @@ function App() {
   }
 
   if (!token || !user) {
-    return <LoginScreen onLogin={handleLogin} error={error} setError={setError} />
+    return <LoginScreen onLogin={handleLogin} error={error} setError={setError} theme={theme} onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')} />
   }
 
   if (user.must_change_password) {
-    return <PasswordScreen token={token} onComplete={setSession} onSignOut={signOut} />
+    return <PasswordScreen token={token} onComplete={setSession} onSignOut={signOut} theme={theme} onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')} />
   }
 
   return (
@@ -350,6 +390,7 @@ function App() {
           <div className="breadcrumbs"><span>Workspace</span><ChevronRight size={14} /><strong>{pageTitle}</strong></div>
           <div className="topbar-actions">
             <div className={`api-indicator ${apiConnected ? '' : 'api-offline'}`}><span className="status-light" /> {apiConnected ? 'API connected' : 'API not checked'}</div>
+            <ThemeButton theme={theme} onToggle={() => setTheme(theme === 'dark' ? 'light' : 'dark')} />
             <button className="icon-button notification-button" aria-label="Notifications" onClick={() => setShowNotifications((show) => !show)}>
               <Bell size={19} />{unreadCount > 0 && <span className="notification-badge">{unreadCount > 9 ? '9+' : unreadCount}</span>}
             </button>
@@ -384,7 +425,7 @@ function App() {
                 <OverviewPage dashboard={dashboard} leads={leads} events={auditEvents} now={renderTime.getTime()} onOpenLead={setSelectedLead} onOpenLeadById={openLeadById} onOpenTasks={() => setPage('tasks')} onSeeAllActivity={() => setPage('activity')} onCompleteTask={completeTask} onOpenLeads={() => setPage('leads')} />
               )}
               {page === 'leads' && (
-                <LeadsPage leads={leads} query={query} setQuery={setQuery} statusFilter={statusFilter} setStatusFilter={setStatusFilter} onOpenLead={setSelectedLead} onUpdateStatus={updateLeadStatus} onAddLead={() => setShowCreateLead(true)} onImportFile={importCsv} importErrors={importErrors} onDismissImportErrors={() => setImportErrors([])} canImport={user.role !== 'agent'} loading={loading} />
+                <LeadsPage leads={leads} query={query} setQuery={setQuery} searchRef={leadSearchRef} statusFilter={statusFilter} setStatusFilter={setStatusFilter} onOpenLead={setSelectedLead} onUpdateStatus={updateLeadStatus} onAddLead={() => setShowCreateLead(true)} onImportFile={importCsv} importErrors={importErrors} onDismissImportErrors={() => dispatch({ type: 'import-errors-cleared' })} canImport={user.role !== 'agent'} loading={loading} />
               )}
               {page === 'tasks' && (
                 <TasksPage tasks={visibleTasks} filter={taskFilter} setFilter={setTaskFilter} now={renderTime.getTime()} onComplete={completeTask} onOpenLead={openLeadById} />
@@ -402,6 +443,13 @@ function App() {
   )
 }
 
+function ThemeButton({ theme, onToggle, className = '' }: { theme: Theme; onToggle: () => void; className?: string }) {
+  const nextTheme = theme === 'dark' ? 'light' : 'dark'
+  return <button className={`icon-button theme-toggle ${className}`} aria-label={`Switch to ${nextTheme} mode`} aria-pressed={theme === 'dark'} title={`Switch to ${nextTheme} mode`} onClick={onToggle}>
+    {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+  </button>
+}
+
 function NavButton({ icon, active, onClick, children }: { icon: React.ReactNode; active: boolean; onClick: () => void; children: React.ReactNode }) {
   return <button className={`nav-item ${active ? 'nav-item-active' : ''}`} onClick={onClick}>{icon}<span>{children}</span></button>
 }
@@ -410,7 +458,7 @@ function LoadingState() {
   return <div className="loading-state"><span className="spinner" /><p>Getting your workspace ready…</p></div>
 }
 
-function LoginScreen({ onLogin, error, setError }: { onLogin: (response: LoginResponse) => void; error: string; setError: (message: string) => void }) {
+function LoginScreen({ onLogin, error, setError, theme, onToggleTheme }: { onLogin: (response: LoginResponse) => void; error: string; setError: (message: string) => void; theme: Theme; onToggleTheme: () => void }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -442,6 +490,7 @@ function LoginScreen({ onLogin, error, setError }: { onLogin: (response: LoginRe
         <p className="art-footnote">MADE FOR THE WAY REAL ESTATE REALLY WORKS.</p>
       </div>
       <div className="auth-main">
+        <ThemeButton theme={theme} onToggle={onToggleTheme} className="auth-theme-toggle" />
         <div className="auth-form-wrap">
           <span className="auth-overline">WELCOME BACK</span>
           <h2>Sign in to your<br />workspace<span className="heading-period">.</span></h2>
@@ -460,7 +509,7 @@ function LoginScreen({ onLogin, error, setError }: { onLogin: (response: LoginRe
   )
 }
 
-function PasswordScreen({ token, onComplete, onSignOut }: { token: string; onComplete: (response: LoginResponse) => void; onSignOut: () => void }) {
+function PasswordScreen({ token, onComplete, onSignOut, theme, onToggleTheme }: { token: string; onComplete: (response: LoginResponse) => void; onSignOut: () => void; theme: Theme; onToggleTheme: () => void }) {
   const [current, setCurrent] = useState('')
   const [next, setNext] = useState('')
   const [confirm, setConfirm] = useState('')
@@ -485,7 +534,7 @@ function PasswordScreen({ token, onComplete, onSignOut }: { token: string; onCom
     }
   }
 
-  return <div className="password-page"><div className="password-card"><span className="brand-mark">U</span><span className="auth-overline">ONE QUICK STEP</span><h1>Make it your own<span className="heading-period">.</span></h1><p>Your account has a temporary password. Create a new one to continue.</p><form className="auth-form" onSubmit={(event) => void submit(event)}><label>Temporary password<input type="password" value={current} onChange={(event) => setCurrent(event.target.value)} required /></label><label>New password<input type="password" minLength={12} value={next} onChange={(event) => setNext(event.target.value)} required /><small className="field-hint">Use at least 12 characters.</small></label><label>Confirm new password<input type="password" value={confirm} onChange={(event) => setConfirm(event.target.value)} required /></label>{error && <div className="form-error"><CircleAlert size={16} />{error}</div>}<button className="button button-primary auth-submit" disabled={submitting}>{submitting ? 'Saving…' : 'Save new password'}<ArrowUpRight size={17} /></button></form><button className="text-button signout-link" onClick={onSignOut}>Sign out instead</button></div></div>
+  return <div className="password-page"><div className="password-card"><div className="password-card-head"><span className="brand-mark">U</span><ThemeButton theme={theme} onToggle={onToggleTheme} /></div><span className="auth-overline">ONE QUICK STEP</span><h1>Make it your own<span className="heading-period">.</span></h1><p>Your account has a temporary password. Create a new one to continue.</p><form className="auth-form" onSubmit={(event) => void submit(event)}><label>Temporary password<input type="password" value={current} onChange={(event) => setCurrent(event.target.value)} required /></label><label>New password<input type="password" minLength={12} value={next} onChange={(event) => setNext(event.target.value)} required /><small className="field-hint">Use at least 12 characters.</small></label><label>Confirm new password<input type="password" value={confirm} onChange={(event) => setConfirm(event.target.value)} required /></label>{error && <div className="form-error"><CircleAlert size={16} />{error}</div>}<button className="button button-primary auth-submit" disabled={submitting}>{submitting ? 'Saving…' : 'Save new password'}<ArrowUpRight size={17} /></button></form><button className="text-button signout-link" onClick={onSignOut}>Sign out instead</button></div></div>
 }
 
 function OverviewPage({ dashboard, leads, events, now, onOpenLead, onOpenLeadById, onOpenTasks, onSeeAllActivity, onCompleteTask, onOpenLeads }: {
@@ -550,15 +599,16 @@ function StatCard({ label, value, icon, hint, tone, trend }: { label: string; va
   return <div className="stat-card"><div className={`stat-icon stat-${tone}`}>{icon}</div><span className="stat-label">{label}</span><strong className="stat-value">{value}</strong><span className="stat-hint">{hint}</span><span className={`stat-trend trend-${tone}`}>{tone === 'rose' ? <ArrowDownRight size={13} /> : <ArrowUpRight size={13} />}{trend}</span></div>
 }
 
-function LeadsPage({ leads, query, setQuery, statusFilter, setStatusFilter, onOpenLead, onUpdateStatus, onAddLead, onImportFile, importErrors, onDismissImportErrors, canImport, loading }: {
+function LeadsPage({ leads, query, setQuery, searchRef, statusFilter, setStatusFilter, onOpenLead, onUpdateStatus, onAddLead, onImportFile, importErrors, onDismissImportErrors, canImport, loading }: {
   leads: Lead[]; query: string; setQuery: (value: string) => void; statusFilter: string
+  searchRef: React.RefObject<HTMLInputElement | null>
   setStatusFilter: (value: string) => void; onOpenLead: (lead: Lead) => void
   onUpdateStatus: (lead: Lead, status: LeadStatus) => void; onAddLead: () => void
   onImportFile: (file: File) => void; importErrors: CSVImportResult['errors']
   onDismissImportErrors: () => void; canImport: boolean; loading: boolean
 }) {
   return <section className="panel full-panel leads-page-panel">
-    <div className="list-toolbar"><div className="search-box"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search leads, locations…" aria-label="Search leads" />{query && <button className="icon-button clear-search" aria-label="Clear search" onClick={() => setQuery('')}><X size={14} /></button>}</div><label className="select-wrap"><SlidersHorizontal size={15} /><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} aria-label="Filter by stage"><option value="">All stages</option>{stages.map((stage) => <option key={stage.value} value={stage.value}>{stage.label}</option>)}</select><ChevronDown size={14} /></label><span className="result-count">{leads.length} leads</span>{canImport && <label className="button button-secondary import-button"><Upload size={15} /> Import CSV<input type="file" accept=".csv,text/csv" onChange={(event) => { const file = event.target.files?.[0]; if (file) onImportFile(file); event.currentTarget.value = '' }} /></label>}</div>
+    <div className="list-toolbar"><div className="search-box"><Search size={17} /><input ref={searchRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search leads, locations…" aria-label="Search leads" /><kbd className="search-shortcut">/</kbd>{query && <button className="icon-button clear-search" aria-label="Clear search" onClick={() => setQuery('')}><X size={14} /></button>}</div><label className="select-wrap"><SlidersHorizontal size={15} /><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} aria-label="Filter by stage"><option value="">All stages</option>{stages.map((stage) => <option key={stage.value} value={stage.value}>{stage.label}</option>)}</select><ChevronDown size={14} /></label><span className="result-count">{leads.length} leads</span>{canImport && <label className="button button-secondary import-button"><Upload size={15} /> Import CSV<input type="file" accept=".csv,text/csv" onChange={(event) => { const file = event.target.files?.[0]; if (file) onImportFile(file); event.currentTarget.value = '' }} /></label>}</div>
     {importErrors.length > 0 && <div className="csv-errors"><div><strong>Some rows weren’t imported</strong><span>Review the row numbers and fix the source CSV before retrying.</span></div><button className="icon-button" aria-label="Dismiss import errors" onClick={onDismissImportErrors}><X size={16} /></button><ul>{importErrors.slice(0, 8).map((item) => <li key={`${item.row}-${item.message}`}><strong>Row {item.row}</strong>{item.message}</li>)}</ul>{importErrors.length > 8 && <small>And {importErrors.length - 8} more row errors.</small>}</div>}
     <div className="table-scroll"><table className="data-table leads-table"><thead><tr><th>Lead</th><th>Contact</th><th>Requirement</th><th>Source</th><th>Stage</th><th>Added</th><th aria-label="Open" /></tr></thead><tbody>{leads.map((lead) => <tr key={lead.id}><td><button className="lead-cell lead-cell-button" onClick={() => onOpenLead(lead)}><div className={`avatar avatar-${avatarColor(lead.full_name)}`}>{initials(lead.full_name)}</div><span><strong>{lead.full_name}</strong><small>{lead.preferred_location || 'Location not set'}</small></span></button></td><td><span>{lead.email || '—'}</span><small className="table-subline">{lead.phone || 'No phone'}</small></td><td><strong className="requirement-main">{lead.bhk ? `${lead.bhk} BHK` : 'Home search'}</strong><small className="table-subline">{budgetRange(lead)}</small></td><td><span className="source-label">{sourceLabels[lead.source]}</span></td><td><select className={`status-select status-${stageFor(lead.status).tone}`} aria-label={`Change ${lead.full_name} stage`} value={lead.status} onChange={(event) => void onUpdateStatus(lead, event.target.value as LeadStatus)}>{stages.map((stage) => <option key={stage.value} value={stage.value}>{stage.label}</option>)}</select></td><td className="muted-cell">{formatDate(lead.created_at)}</td><td><button className="icon-button row-open" aria-label={`Open ${lead.full_name}`} onClick={() => onOpenLead(lead)}><ChevronRight size={17} /></button></td></tr>)}</tbody></table></div>
     {!leads.length && !loading && <EmptyState title={query || statusFilter ? 'No matching leads' : 'No leads yet'} description={query || statusFilter ? 'Try another search or clear the stage filter.' : 'Your next great client relationship starts here.'} action={!query && !statusFilter ? <button className="button button-primary" onClick={onAddLead}><Plus size={16} /> Add your first lead</button> : undefined} />}

@@ -152,7 +152,7 @@ h1, h2, h3, p { margin-top: 0; }
 .activity-summary { display: block; margin: 1px 0 3px; color: #76847b; font-size: 9px; line-height: 1.5; }
 .activity-summary strong { color: #485a4e; font-weight: 600; }
 .activity-body time { display: block; color: #a7b0aa; font-size: 8px; }
-.activity-detail { display: block; margin: 4px 0; color: #60766a; font-size: 10px; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
+.activity-detail { display: block; margin: 4px 0; color: #60766a; font-size: 11px; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
 .activity-read-dot { width: 6px; height: 6px; flex: none; margin: 7px 2px 0 0; border-radius: 50%; background: #73a887; }
 .activity-read-dot.is-read { background: transparent; }
 .empty-state { min-height: 180px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 25px 20px; color: #87958b; text-align: center; }
@@ -230,7 +230,7 @@ h1, h2, h3, p { margin-top: 0; }
 .activity-list-expanded .activity-avatar { width: 34px; height: 34px; font-size: 9px; }
 .activity-list-expanded .activity-summary { font-size: 11px; }
 .activity-list-expanded .activity-body time { margin-top: 4px; font-size: 9px; }
-.activity-list-expanded .activity-detail { font-size: 10px; }
+.activity-list-expanded .activity-detail { font-size: 11px; }
 .activity-feed-note { display: flex; align-items: center; gap: 8px; padding: 13px 0 0; border-top: 1px solid #eff2ef; color: #9aa69d; font-size: 9px; }
 .activity-feed-note .secure-dot { width: 6px; height: 6px; }
 .popover-backdrop { position: fixed; inset: 0; z-index: 29; border: 0; background: transparent; }

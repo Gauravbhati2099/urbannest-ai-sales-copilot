@@ -794,6 +794,7 @@ const auditFieldLabels: Record<string, string> = {
   role: 'Role',
   source: 'Source',
   status: 'Stage',
+  task_title: 'Follow-up task',
   activity_type: 'Activity type',
   preferred_location: 'Preferred location',
 }
@@ -812,12 +813,12 @@ function auditValue(key: string, value: unknown) {
   return String(value).replaceAll('_', ' ')
 }
 
-function formatAuditChange(key: string, value: unknown) {
+function formatAuditChange(key: string, value: unknown, entityType: string) {
   if (key === 'changed_fields' && Array.isArray(value)) {
     const fields = value.filter((field): field is string => typeof field === 'string')
     return fields.length ? `Updated: ${fields.map(auditFieldLabel).join(', ')}` : 'Details updated'
   }
-  const label = auditFieldLabel(key)
+  const label = key === 'status' && entityType === 'task' ? 'Task status' : auditFieldLabel(key)
   if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
     if ('from' in value && 'to' in value) {
       if (key === 'assigned_to') return 'Assignee changed'
@@ -832,7 +833,7 @@ function formatAuditChange(key: string, value: unknown) {
 function ActivityList({ events, expanded = false, onOpenEvent }: { events: AuditEvent[]; expanded?: boolean; onOpenEvent?: (event: AuditEvent) => void }) {
   return <div className={`activity-list ${expanded ? 'activity-list-expanded' : ''}`}>{events.map((event, index) => {
     const actionLabel = event.lead_id ? 'Open lead' : event.entity_type === 'task' ? 'Open follow-up' : event.entity_type === 'user' ? 'Open team' : 'View activity'
-    const content = <><span className={`activity-avatar activity-${index % 4}`}>{event.actor_name ? initials(event.actor_name) : <Sparkles size={14} />}</span><span className="activity-body"><span className="activity-summary"><strong>{event.actor_name || 'UrbanNest team'}</strong> {event.summary.toLowerCase()}</span>{event.changes && Object.keys(event.changes).length > 0 && <span className="activity-detail" aria-label="What changed">{Object.entries(event.changes).map(([key, value]) => formatAuditChange(key, value)).join(' · ')}</span>}<time>{relativeDate(event.created_at)}</time>{onOpenEvent && <span className="activity-open-link">{actionLabel}<ArrowUpRight size={12} /></span>}</span><span className={`activity-read-dot ${event.is_read ? 'is-read' : ''}`} /></>
+    const content = <><span className={`activity-avatar activity-${index % 4}`}>{event.actor_name ? initials(event.actor_name) : <Sparkles size={14} />}</span><span className="activity-body"><span className="activity-summary"><strong>{event.actor_name || 'UrbanNest team'}</strong> {event.summary.toLowerCase()}</span>{event.changes && Object.keys(event.changes).length > 0 && <span className="activity-detail" aria-label="What changed">{Object.entries(event.changes).map(([key, value]) => formatAuditChange(key, value, event.entity_type)).join(' · ')}</span>}<time>{relativeDate(event.created_at)}</time>{onOpenEvent && <span className="activity-open-link">{actionLabel}<ArrowUpRight size={12} /></span>}</span><span className={`activity-read-dot ${event.is_read ? 'is-read' : ''}`} /></>
     return onOpenEvent
       ? <button className="activity-item activity-item-action" key={event.id} onClick={() => onOpenEvent(event)} aria-label={`${actionLabel}: ${event.summary}`}>{content}</button>
       : <div className="activity-item" key={event.id}>{content}</div>

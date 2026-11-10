@@ -15,7 +15,7 @@ from app.core.dependencies import CurrentUser, DatabaseSession
 from app.core.rate_limit import rate_limit_setting
 from app.core.security import decode_access_token
 from app.db.config import get_database_url
-from app.db.models import AuditEvent, AuditReadCursor, User
+from app.db.models import AuditEvent, AuditReadCursor, Task, User
 from app.db.session import SessionLocal
 from app.modules.audit.schemas import (
     AuditEventRead,
@@ -97,6 +97,23 @@ def list_audit_events(
             .offset(offset)
         ).all()
     )
+    task_ids = [
+        event.entity_id
+        for event in events
+        if event.entity_type == "task" and event.entity_id is not None
+    ]
+    task_titles = (
+        dict(
+            session.execute(
+                select(Task.id, Task.title).where(
+                    Task.team_id == current_user.team_id,
+                    Task.id.in_(task_ids),
+                )
+            ).all()
+        )
+        if task_ids
+        else {}
+    )
     return AuditFeedResponse(
         events=[
             AuditEventRead.model_validate(event).model_copy(
@@ -105,7 +122,17 @@ def list_audit_events(
                         event.created_at <= last_read_at
                         if last_read_at is not None
                         else False
-                    )
+                    ),
+                    "changes": (
+                        {
+                            **(event.changes or {}),
+                            "task_title": task_titles[event.entity_id],
+                        }
+                        if event.entity_type == "task"
+                        and event.entity_id in task_titles
+                        and "task_title" not in (event.changes or {})
+                        else event.changes
+                    ),
                 }
             )
             for event in events

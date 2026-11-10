@@ -128,7 +128,10 @@ def create_task(
         action="created",
         visibility=AuditVisibility.TEAM,
         summary="A follow-up task was created",
-        changes={"due_at": task.due_at.isoformat()},
+        changes={
+            "task_title": task.title,
+            "due_at": task.due_at.isoformat(),
+        },
     )
     session.commit()
     session.refresh(task)
@@ -203,7 +206,7 @@ def update_task(
             action="updated",
             visibility=AuditVisibility.TEAM,
             summary="A follow-up task was updated",
-            changes=audit_changes,
+            changes={"task_title": task.title, **audit_changes},
         )
 
     session.commit()

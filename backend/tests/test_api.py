@@ -522,6 +522,17 @@ class APIAuthAndAuthorizationTests(unittest.TestCase):
                 team_id=self.team.id,
                 actor_id=self.owner_id,
                 lead_id=self.lead_id,
+                entity_type="task",
+                entity_id=self.task_id,
+                action="updated",
+                visibility=AuditVisibility.TEAM,
+                summary="A follow-up task was updated",
+                changes={"status": {"from": "open", "to": "completed"}},
+            ),
+            AuditEvent(
+                team_id=self.team.id,
+                actor_id=self.owner_id,
+                lead_id=self.lead_id,
                 entity_type="lead",
                 entity_id=self.lead_id,
                 action="updated",
@@ -593,11 +604,16 @@ class APIAuthAndAuthorizationTests(unittest.TestCase):
         self.assertEqual(
             agent_summaries,
             {
+                "A follow-up task was updated",
                 "Assigned lead changed",
                 "Your password was changed",
                 "A new website inquiry was received",
             },
         )
+        task_event = next(
+            event for event in agent_events if event["entity_type"] == "task"
+        )
+        self.assertEqual(task_event["changes"]["task_title"], "Agent task")
         self.assertGreaterEqual(
             agent_feed.json()["unread_count"],
             3,
@@ -908,6 +924,22 @@ class APIAuthAndAuthorizationTests(unittest.TestCase):
         self.assertEqual(completed.json()["status"], "completed")
         self.assertIsNotNone(completed.json()["completed_at"])
 
+        audit_feed = self.client.get(
+            "/api/v1/audit/events",
+            headers=self.headers("agent@example.test"),
+        )
+        self.assertEqual(audit_feed.status_code, 200, audit_feed.text)
+        task_event = next(
+            event
+            for event in audit_feed.json()["events"]
+            if event["entity_id"] == str(self.task_id)
+        )
+        self.assertEqual(task_event["changes"]["task_title"], "Agent task")
+        self.assertEqual(
+            task_event["changes"]["status"],
+            {"from": "open", "to": "completed"},
+        )
+
     def test_completed_tasks_can_be_listed_and_task_detail_is_role_scoped(self) -> None:
         headers = self.headers("agent@example.test")
         completed = self.client.patch(
@@ -974,6 +1006,18 @@ class APIAuthAndAuthorizationTests(unittest.TestCase):
         self.assertEqual(response.json()["team_id"], str(self.team.id))
         self.assertEqual(response.json()["created_by"], str(self.agent_id))
         self.assertEqual(response.json()["assigned_to"], str(self.agent_id))
+
+        audit_feed = self.client.get(
+            "/api/v1/audit/events",
+            headers=self.headers("agent@example.test"),
+        )
+        self.assertEqual(audit_feed.status_code, 200, audit_feed.text)
+        task_event = next(
+            event
+            for event in audit_feed.json()["events"]
+            if event["entity_id"] == response.json()["id"]
+        )
+        self.assertEqual(task_event["changes"]["task_title"], "Call about site visit")
 
         denied = self.client.post(
             "/api/v1/tasks",

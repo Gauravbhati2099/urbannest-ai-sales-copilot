@@ -56,6 +56,13 @@ import './App.css'
 type Page = 'overview' | 'leads' | 'tasks' | 'activity' | 'team' | 'profile'
 type Theme = 'light' | 'dark'
 
+type ConfirmationRequest = {
+  title: string
+  message: string
+  confirmLabel: string
+  onConfirm: () => void | Promise<void>
+}
+
 const stages: { value: LeadStatus; label: string; tone: string }[] = [
   { value: 'new', label: 'New', tone: 'slate' },
   { value: 'contacted', label: 'Contacted', tone: 'blue' },
@@ -151,6 +158,7 @@ function App() {
   const [showCreateLead, setShowCreateLead] = useState(false)
   const [showNotifications, setShowNotifications] = useState(false)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
+  const [confirmation, setConfirmation] = useState<ConfirmationRequest | null>(null)
   const [notice, setNotice] = useState('')
   const [temporaryPassword, setTemporaryPassword] = useState<{ email: string; password: string } | null>(null)
   const setError = useCallback((message: string) => {
@@ -477,7 +485,12 @@ function App() {
             <span className="user-meta"><strong>{user.full_name}</strong><span>{user.role}</span></span>
             <UserRound className="profile-indicator" size={16} />
           </button>
-          <button className="sign-out-button" onClick={signOut}><LogOut size={16} /><span>Sign out</span></button>
+          <button className="sign-out-button" onClick={() => setConfirmation({
+            title: 'Sign out?',
+            message: 'You’ll need to sign in again to continue working in UrbanNest Realty.',
+            confirmLabel: 'Sign out',
+            onConfirm: signOut,
+          })}><LogOut size={16} /><span>Sign out</span></button>
         </div>
       </aside>
 
@@ -526,7 +539,7 @@ function App() {
                 <TasksPage tasks={visibleTasks} filter={taskFilter} setFilter={setTaskFilter} now={renderTime.getTime()} onComplete={completeTask} onOpenLead={openLeadById} />
               )}
               {page === 'activity' && <ActivityPage events={auditEvents} unreadCount={unreadCount} onMarkRead={markRead} onOpenEvent={(event) => void openAuditEvent(event)} />}
-              {page === 'team' && user.role !== 'agent' && <TeamPage currentUser={user} users={teamUsers} temporaryPassword={temporaryPassword} onClearTemporaryPassword={() => setTemporaryPassword(null)} onCreate={createTeamUser} onUpdate={updateTeamUser} onResetPassword={(member) => void resetTeamUserPassword(member)} onError={setError} />}
+              {page === 'team' && user.role !== 'agent' && <TeamPage currentUser={user} users={teamUsers} temporaryPassword={temporaryPassword} onClearTemporaryPassword={() => setTemporaryPassword(null)} onCreate={createTeamUser} onUpdate={updateTeamUser} onResetPassword={(member) => void resetTeamUserPassword(member)} onError={setError} onConfirmAction={setConfirmation} />}
               {page === 'profile' && <ProfilePage user={user} onChangePassword={changeOwnPassword} />}
             </>
           )}
@@ -534,6 +547,7 @@ function App() {
       </main>
 
       {showNotifications && <NotificationPanel events={auditEvents.slice(0, 5)} unreadCount={unreadCount} onClose={() => setShowNotifications(false)} onOpenEvent={(event) => void openAuditEvent(event)} onOpenActivity={() => { setPage('activity'); setShowNotifications(false) }} />}
+      {confirmation && <ConfirmationDialog request={confirmation} onCancel={() => setConfirmation(null)} onConfirmed={() => setConfirmation(null)} />}
       {selectedLead && <LeadDrawer lead={selectedLead} token={token} onClose={() => setSelectedLead(null)} onUpdated={(updated) => { setSelectedLead(updated); void refresh() }} onError={setError} />}
       {showCreateLead && <CreateLeadModal token={token} currentUser={user} onClose={() => setShowCreateLead(false)} onCreated={async (lead) => { setShowCreateLead(false); setNotice(`Added ${lead.full_name} to your leads.`); setPage('leads'); await refresh(); setSelectedLead(lead) }} onError={setError} />}
     </div>
@@ -612,6 +626,7 @@ function PasswordScreen({ token, onComplete, onSignOut, theme, onToggleTheme }: 
   const [confirm, setConfirm] = useState('')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [showSignOutConfirmation, setShowSignOutConfirmation] = useState(false)
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -631,7 +646,29 @@ function PasswordScreen({ token, onComplete, onSignOut, theme, onToggleTheme }: 
     }
   }
 
-  return <div className="password-page"><div className="password-card"><div className="password-card-head"><span className="brand-mark">U</span><ThemeButton theme={theme} onToggle={onToggleTheme} /></div><span className="auth-overline">ONE QUICK STEP</span><h1>Make it your own<span className="heading-period">.</span></h1><p>Your account has a temporary password. Create a new one to continue.</p><form className="auth-form" onSubmit={(event) => void submit(event)}><label>Temporary password<input type="password" value={current} onChange={(event) => setCurrent(event.target.value)} required /></label><label>New password<input type="password" minLength={12} value={next} onChange={(event) => setNext(event.target.value)} required /><small className="field-hint">Use at least 12 characters.</small></label><label>Confirm new password<input type="password" value={confirm} onChange={(event) => setConfirm(event.target.value)} required /></label>{error && <div className="form-error"><CircleAlert size={16} />{error}</div>}<button className="button button-primary auth-submit" disabled={submitting}>{submitting ? 'Saving…' : 'Save new password'}<ArrowUpRight size={17} /></button></form><button className="text-button signout-link" onClick={onSignOut}>Sign out instead</button></div></div>
+  return <div className="password-page"><div className="password-card"><div className="password-card-head"><span className="brand-mark">U</span><ThemeButton theme={theme} onToggle={onToggleTheme} /></div><span className="auth-overline">ONE QUICK STEP</span><h1>Make it your own<span className="heading-period">.</span></h1><p>Your account has a temporary password. Create a new one to continue.</p><form className="auth-form" onSubmit={(event) => void submit(event)}><label>Temporary password<input type="password" value={current} onChange={(event) => setCurrent(event.target.value)} required /></label><label>New password<input type="password" minLength={12} value={next} onChange={(event) => setNext(event.target.value)} required /><small className="field-hint">Use at least 12 characters.</small></label><label>Confirm new password<input type="password" value={confirm} onChange={(event) => setConfirm(event.target.value)} required /></label>{error && <div className="form-error"><CircleAlert size={16} />{error}</div>}<button className="button button-primary auth-submit" disabled={submitting}>{submitting ? 'Saving…' : 'Save new password'}<ArrowUpRight size={17} /></button></form><button className="text-button signout-link" onClick={() => setShowSignOutConfirmation(true)}>Sign out instead</button></div>{showSignOutConfirmation && <ConfirmationDialog request={{ title: 'Sign out?', message: 'You’ll need to sign in again to continue setting up your account.', confirmLabel: 'Sign out', onConfirm: onSignOut }} onCancel={() => setShowSignOutConfirmation(false)} onConfirmed={() => setShowSignOutConfirmation(false)} />}</div>
+}
+
+function ConfirmationDialog({ request, onCancel, onConfirmed }: { request: ConfirmationRequest; onCancel: () => void; onConfirmed: () => void }) {
+  const [confirming, setConfirming] = useState(false)
+
+  const confirm = async () => {
+    setConfirming(true)
+    await request.onConfirm()
+    onConfirmed()
+  }
+
+  return <div className="confirmation-backdrop" onKeyDown={(event) => { if (event.key === 'Escape' && !confirming) onCancel() }} onMouseDown={(event) => { if (event.target === event.currentTarget && !confirming) onCancel() }}>
+    <section className="confirmation-dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirmation-title" aria-describedby="confirmation-message">
+      <div className="confirmation-icon"><CircleAlert size={20} /></div>
+      <h2 id="confirmation-title">{request.title}</h2>
+      <p id="confirmation-message">{request.message}</p>
+      <div className="confirmation-actions">
+        <button className="button button-secondary" type="button" onClick={onCancel} disabled={confirming} autoFocus>Cancel</button>
+        <button className="button button-danger" type="button" onClick={() => void confirm()} disabled={confirming}>{confirming ? 'Please wait…' : request.confirmLabel}</button>
+      </div>
+    </section>
+  </div>
 }
 
 function OverviewPage({ dashboard, leads, events, now, onOpenLead, onOpenLeadById, onOpenTasks, onSeeAllActivity, onCompleteTask, onOpenLeads, onOpenEvent }: {
@@ -907,7 +944,7 @@ function ProfilePage({ user, onChangePassword }: { user: User; onChangePassword:
   </section>
 }
 
-function TeamPage({ currentUser, users, temporaryPassword, onClearTemporaryPassword, onCreate, onUpdate, onResetPassword, onError }: {
+function TeamPage({ currentUser, users, temporaryPassword, onClearTemporaryPassword, onCreate, onUpdate, onResetPassword, onError, onConfirmAction }: {
   currentUser: User
   users: User[]
   temporaryPassword: { email: string; password: string } | null
@@ -916,6 +953,7 @@ function TeamPage({ currentUser, users, temporaryPassword, onClearTemporaryPassw
   onUpdate: (userId: string, changes: UserUpdateRequest) => Promise<void>
   onResetPassword: (user: User) => void
   onError: (message: string) => void
+  onConfirmAction: (request: ConfirmationRequest) => void
 }) {
   const [showForm, setShowForm] = useState(false)
   const [fullName, setFullName] = useState('')
@@ -957,7 +995,14 @@ function TeamPage({ currentUser, users, temporaryPassword, onClearTemporaryPassw
           : <span className="role-pill">{member.role}</span>}
         <span className={`member-status ${member.is_active ? 'member-status-active' : ''}`}>{member.is_active ? 'Active' : 'Inactive'}</span>
         {member.id !== currentUser.id && <div className="member-actions">
-          <button className="button button-secondary" onClick={() => void onUpdate(member.id, { is_active: !member.is_active })}>{member.is_active ? 'Deactivate' : 'Reactivate'}</button>
+          <button className="button button-secondary" onClick={() => member.is_active
+            ? onConfirmAction({
+              title: `Deactivate ${member.full_name}?`,
+              message: 'They will lose access to this workspace until an owner or manager reactivates their account. Their existing CRM records will remain.',
+              confirmLabel: 'Deactivate account',
+              onConfirm: () => onUpdate(member.id, { is_active: false }),
+            })
+            : void onUpdate(member.id, { is_active: true })}>{member.is_active ? 'Deactivate' : 'Reactivate'}</button>
           <button className="icon-button" aria-label={`Reset password for ${member.full_name}`} title="Reset password" onClick={() => onResetPassword(member)}><RotateCcw size={16} /></button>
         </div>}
       </article>)}

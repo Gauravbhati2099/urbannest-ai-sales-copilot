@@ -781,24 +781,58 @@ function ActivityPage({ events, unreadCount, onMarkRead, onOpenEvent }: { events
   return <section className="panel full-panel activity-page-panel"><div className="panel-header"><div><p className="eyebrow">SHARED WITH YOUR TEAM</p><h2>The activity feed</h2><p className="panel-subtitle">A clear view of the important changes happening across your workspace.</p></div>{unreadCount > 0 && <button className="button button-secondary" onClick={onMarkRead}><CheckCheck size={16} /> Mark as read</button>}</div>{events.length ? <ActivityList events={events} expanded onOpenEvent={onOpenEvent} /> : <EmptyState title="Nothing to report yet" description="Team changes and lead updates will show up here." />}<div className="activity-feed-note"><span className="secure-dot" /> This feed follows your team role and lead access.</div></section>
 }
 
+const auditFieldLabels: Record<string, string> = {
+  assigned_to: 'Assignee',
+  bhk: 'Bedrooms',
+  budget_max_inr: 'Maximum budget',
+  budget_min_inr: 'Minimum budget',
+  changed_fields: 'Updated fields',
+  created_count: 'Leads imported',
+  due_at: 'Due date',
+  full_name: 'Name',
+  is_active: 'Account status',
+  role: 'Role',
+  source: 'Source',
+  status: 'Stage',
+  activity_type: 'Activity type',
+  preferred_location: 'Preferred location',
+}
+
+function auditFieldLabel(key: string) {
+  return auditFieldLabels[key] ?? key.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())
+}
+
+function auditValue(key: string, value: unknown) {
+  if (value == null) return 'None'
+  if (key === 'budget_min_inr' || key === 'budget_max_inr') {
+    return typeof value === 'number' ? formatCurrency(value) : 'Budget updated'
+  }
+  if (key === 'assigned_to') return 'Assignee changed'
+  if (typeof value === 'boolean') return value ? 'Active' : 'Inactive'
+  return String(value).replaceAll('_', ' ')
+}
+
 function formatAuditChange(key: string, value: unknown) {
-  const label = key.replaceAll('_', ' ')
+  if (key === 'changed_fields' && Array.isArray(value)) {
+    const fields = value.filter((field): field is string => typeof field === 'string')
+    return fields.length ? `Updated: ${fields.map(auditFieldLabel).join(', ')}` : 'Details updated'
+  }
+  const label = auditFieldLabel(key)
   if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
     if ('from' in value && 'to' in value) {
-      const previous = String(value.from).replaceAll('_', ' ')
-      const next = String(value.to).replaceAll('_', ' ')
-      return `${label}: ${previous} → ${next}`
+      if (key === 'assigned_to') return 'Assignee changed'
+      return `${label}: ${auditValue(key, value.from)} → ${auditValue(key, value.to)}`
     }
     return `${label} updated`
   }
-  if (Array.isArray(value)) return `${label} updated`
-  return `${label}: ${String(value).replaceAll('_', ' ')}`
+  if (Array.isArray(value)) return `${label}: ${value.map((item) => String(item).replaceAll('_', ' ')).join(', ')}`
+  return `${label}: ${auditValue(key, value)}`
 }
 
 function ActivityList({ events, expanded = false, onOpenEvent }: { events: AuditEvent[]; expanded?: boolean; onOpenEvent?: (event: AuditEvent) => void }) {
   return <div className={`activity-list ${expanded ? 'activity-list-expanded' : ''}`}>{events.map((event, index) => {
     const actionLabel = event.lead_id ? 'Open lead' : event.entity_type === 'task' ? 'Open follow-up' : event.entity_type === 'user' ? 'Open team' : 'View activity'
-    const content = <><span className={`activity-avatar activity-${index % 4}`}>{event.actor_name ? initials(event.actor_name) : <Sparkles size={14} />}</span><span className="activity-body"><span className="activity-summary"><strong>{event.actor_name || 'UrbanNest team'}</strong> {event.summary.toLowerCase()}</span>{event.changes && Object.keys(event.changes).length > 0 && <span className="activity-detail">{Object.entries(event.changes).slice(0, 2).map(([key, value]) => formatAuditChange(key, value)).join(' · ')}</span>}<time>{relativeDate(event.created_at)}</time>{onOpenEvent && <span className="activity-open-link">{actionLabel}<ArrowUpRight size={12} /></span>}</span><span className={`activity-read-dot ${event.is_read ? 'is-read' : ''}`} /></>
+    const content = <><span className={`activity-avatar activity-${index % 4}`}>{event.actor_name ? initials(event.actor_name) : <Sparkles size={14} />}</span><span className="activity-body"><span className="activity-summary"><strong>{event.actor_name || 'UrbanNest team'}</strong> {event.summary.toLowerCase()}</span>{event.changes && Object.keys(event.changes).length > 0 && <span className="activity-detail" aria-label="What changed">{Object.entries(event.changes).map(([key, value]) => formatAuditChange(key, value)).join(' · ')}</span>}<time>{relativeDate(event.created_at)}</time>{onOpenEvent && <span className="activity-open-link">{actionLabel}<ArrowUpRight size={12} /></span>}</span><span className={`activity-read-dot ${event.is_read ? 'is-read' : ''}`} /></>
     return onOpenEvent
       ? <button className="activity-item activity-item-action" key={event.id} onClick={() => onOpenEvent(event)} aria-label={`${actionLabel}: ${event.summary}`}>{content}</button>
       : <div className="activity-item" key={event.id}>{content}</div>

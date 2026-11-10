@@ -153,6 +153,9 @@ h1, h2, h3, p { margin-top: 0; }
 .activity-summary strong { color: #485a4e; font-weight: 600; }
 .activity-body time { display: block; color: #a7b0aa; font-size: 8px; }
 .activity-detail { display: block; margin: 4px 0; color: #60766a; font-size: 11px; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
+.activity-task-detail { display: grid; gap: 2px; }
+.activity-task-title { color: #405b48; font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
+.activity-task-changes { color: #75867a; font-size: 10px; font-weight: 500; line-height: 1.4; }
 .activity-read-dot { width: 6px; height: 6px; flex: none; margin: 7px 2px 0 0; border-radius: 50%; background: #73a887; }
 .activity-read-dot.is-read { background: transparent; }
 .empty-state { min-height: 180px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 25px 20px; color: #87958b; text-align: center; }
@@ -240,6 +243,11 @@ h1, h2, h3, p { margin-top: 0; }
 .notification-panel-head strong { color: #35493d; font-size: 12px; }
 .notification-panel-head span { color: #9ba69f; font-size: 9px; }
 .notification-panel .activity-item { padding: 10px 0; }
+.notification-panel .activity-summary { margin-bottom: 2px; font-size: 10px; }
+.notification-panel .activity-detail { margin: 3px 0 5px; }
+.notification-panel .activity-task-title { font-size: 11px; }
+.notification-panel .activity-task-changes { font-size: 10px; }
+.notification-panel .activity-open-link { display: none; }
 .notification-panel .empty-state { min-height: 140px; }
 
 /* Lead detail drawer */
@@ -764,6 +772,8 @@ select option { color: #23322d; background: #fff; }
 :root[data-theme='dark'] .activity-item-action:hover { background: #263d2e; }
 :root[data-theme='dark'] .activity-open-link { color: #a5d0ae; }
 :root[data-theme='dark'] .activity-detail { color: #b6d5bd; }
+:root[data-theme='dark'] .activity-task-title { color: #dce9de; }
+:root[data-theme='dark'] .activity-task-changes { color: #a9bbaa; }
 :root[data-theme='dark'] .stat-rose { color: #ff9a84; background: #432b27; }
 :root[data-theme='dark'] .trend-rose { color: #ff9a84; }
 :root[data-theme='dark'] .profile-summary-card,

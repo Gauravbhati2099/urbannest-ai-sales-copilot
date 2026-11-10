@@ -49,7 +49,8 @@ from a browser are never trusted and deactivated accounts are rejected.
 | `POST` | `/api/v1/leads/{lead_id}/ai/draft` | Drafts a visible lead's follow-up; saves as an editable `draft`, never sends |
 | `POST` | `/api/v1/leads/{lead_id}/ai/extract` | Returns validated proposed property/task fields for user confirmation; does not save them |
 | `GET` | `/api/v1/dashboard/summary` | Role-scoped pipeline totals, open-task counts, and due-today/overdue task lists |
-| `GET` | `/api/v1/tasks?due=today\|overdue` | Managers/owners see team tasks; agents see tasks on their assigned leads; timezone-aware |
+| `GET` | `/api/v1/tasks` | Managers/owners see team tasks; agents see tasks on their assigned leads; defaults to `status=open`; supports `status=open\|completed\|cancelled` and timezone-aware `due=today\|overdue` filters |
+| `GET` | `/api/v1/tasks/{task_id}` | Returns a task only when the caller can access its lead and task assignment |
 | `POST` | `/api/v1/tasks` | Creates a task for a visible lead; assignee must be active and in the same team |
 | `PATCH` | `/api/v1/tasks/{task_id}` | Managers/owners may update/reassign team tasks; agents may update their own assigned tasks |
 
@@ -59,7 +60,9 @@ as authority; the backend derives these from the authenticated user. Record
 lookups are filtered by team and, for agents, assignment before returning a
 result. Status and assignment changes create timeline activities in the same
 transaction. Changes to score-relevant lead fields and new activities mark
-existing lead scores stale transactionally.
+existing lead scores stale transactionally. Task due filters apply only to
+open tasks; combine `due=today` or `due=overdue` with the default status or
+`status=open`.
 
 ## Roles
 

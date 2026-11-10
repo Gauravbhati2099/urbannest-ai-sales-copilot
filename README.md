@@ -77,6 +77,7 @@ indexing. This frontend does not expose AI inference controls yet.
 
 - [Plan and ownership](docs/PLAN.md)
 - [Architecture decisions](docs/approach.md)
+- [Workflow diagrams](docs/workflows.md)
 - [Database ERD](docs/ERD.md)
 - [Technology stack](docs/techstack.md)
 - [API and authentication contract](docs/api-auth.md)

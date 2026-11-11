@@ -15,7 +15,7 @@ from app.db.models import (
     UserRole,
 )
 
-ADMIN_ROLES = {UserRole.OWNER, UserRole.MANAGER}
+ADMIN_ROLES = {UserRole.OWNER, UserRole.CO_OWNER, UserRole.MANAGER}
 
 
 def visible_audit_statement(user: User):

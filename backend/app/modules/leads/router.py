@@ -12,7 +12,11 @@ from pydantic import ValidationError
 from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import CurrentUser, DatabaseSession
+from app.core.dependencies import (
+    CurrentUser,
+    DatabaseSession,
+    is_team_record_manager,
+)
 from app.core.rate_limit import client_address, enforce_rate_limits, rate_limit_setting
 from app.db.models import (
     Activity,
@@ -40,7 +44,6 @@ from app.modules.audit.service import record_audit_event
 
 router = APIRouter(prefix="/leads", tags=["leads"])
 public_router = APIRouter(prefix="/public/leads", tags=["public leads"])
-MANAGER_ROLES = {UserRole.OWNER, UserRole.MANAGER}
 CSV_COLUMNS = {
     "full_name",
     "email",
@@ -304,7 +307,7 @@ def update_lead(
             detail="Required lead fields cannot be null",
         )
     if "assigned_to" in changes:
-        if current_user.role not in MANAGER_ROLES:
+        if not is_team_record_manager(current_user):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
         get_active_team_member(session, current_user, changes["assigned_to"])
 
@@ -485,7 +488,7 @@ async def import_leads_csv(
     session: DatabaseSession,
 ) -> CSVImportResult:
     """Import up to 500 CSV rows; managers and owners receive per-row errors."""
-    if current_user.role not in MANAGER_ROLES:
+    if not is_team_record_manager(current_user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
     if file.content_type not in {"text/csv", "application/csv", "application/vnd.ms-excel"}:
         raise HTTPException(status_code=415, detail="Upload a CSV file")

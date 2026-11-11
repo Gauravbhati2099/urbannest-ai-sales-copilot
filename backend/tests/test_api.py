@@ -411,6 +411,111 @@ class APIAuthAndAuthorizationTests(unittest.TestCase):
         self.assertEqual(blocked.status_code, 403)
         self.assertEqual(blocked.json()["detail"]["code"], "password_change_required")
 
+    def test_owner_can_create_co_owner_with_explicit_global_permissions(self) -> None:
+        manager_created = self.client.post(
+            "/api/v1/users",
+            headers=self.headers("owner@example.test"),
+            json={
+                "full_name": "New Manager",
+                "email": "new.manager@example.test",
+                "role": "manager",
+            },
+        )
+        self.assertEqual(manager_created.status_code, 201, manager_created.text)
+
+        response = self.client.post(
+            "/api/v1/users",
+            headers=self.headers("owner@example.test"),
+            json={
+                "full_name": "Limited Co-owner",
+                "email": "co.owner@example.test",
+                "role": "co_owner",
+                "can_read": False,
+                "can_write": False,
+                "can_delete": False,
+                "can_manage_users": True,
+            },
+        )
+        self.assertEqual(response.status_code, 201, response.text)
+        co_owner = response.json()["user"]
+        self.assertEqual(co_owner["role"], "co_owner")
+        self.assertFalse(co_owner["can_read"])
+        self.assertFalse(co_owner["can_write"])
+        self.assertFalse(co_owner["can_delete"])
+        self.assertTrue(co_owner["can_manage_users"])
+
+        manager_denied = self.client.post(
+            "/api/v1/users",
+            headers=self.headers("manager@example.test"),
+            json={
+                "full_name": "Unauthorized Co-owner",
+                "email": "unauthorized.co.owner@example.test",
+                "role": "co_owner",
+            },
+        )
+        self.assertEqual(manager_denied.status_code, 403)
+
+        with self.session_factory.begin() as session:
+            user = session.get(User, UUID(co_owner["id"]))
+            assert user is not None
+            user.password_hash = password_hash.hash(self.password)
+            user.must_change_password = False
+        headers = self.headers("co.owner@example.test")
+        denied_read = self.client.get("/api/v1/leads", headers=headers)
+        self.assertEqual(denied_read.status_code, 403)
+        allowed_user_read = self.client.get("/api/v1/users", headers=headers)
+        self.assertEqual(allowed_user_read.status_code, 200)
+        self.assertEqual(
+            {user["role"] for user in allowed_user_read.json()},
+            {"agent"},
+        )
+        denied_write = self.client.patch(
+            f"/api/v1/leads/{self.lead_id}",
+            headers=headers,
+            json={"status": "contacted"},
+        )
+        self.assertEqual(denied_write.status_code, 403)
+
+    def test_co_owner_needs_delete_access_to_deactivate_team_agents(self) -> None:
+        created = self.client.post(
+            "/api/v1/users",
+            headers=self.headers("owner@example.test"),
+            json={
+                "full_name": "Team Co-owner",
+                "email": "team.co.owner@example.test",
+                "role": "co_owner",
+                "can_manage_users": True,
+                "can_delete": False,
+            },
+        )
+        self.assertEqual(created.status_code, 201, created.text)
+        with self.session_factory.begin() as session:
+            user = session.get(User, UUID(created.json()["user"]["id"]))
+            assert user is not None
+            user.password_hash = password_hash.hash(self.password)
+            user.must_change_password = False
+        co_owner_headers = self.headers("team.co.owner@example.test")
+        denied = self.client.patch(
+            f"/api/v1/users/{self.other_agent_id}",
+            headers=co_owner_headers,
+            json={"is_active": False},
+        )
+        self.assertEqual(denied.status_code, 403)
+
+        enabled = self.client.patch(
+            f"/api/v1/users/{created.json()['user']['id']}",
+            headers=self.headers("owner@example.test"),
+            json={"can_delete": True},
+        )
+        self.assertEqual(enabled.status_code, 200, enabled.text)
+        allowed = self.client.patch(
+            f"/api/v1/users/{self.other_agent_id}",
+            headers=self.headers("team.co.owner@example.test"),
+            json={"is_active": False},
+        )
+        self.assertEqual(allowed.status_code, 200, allowed.text)
+        self.assertFalse(allowed.json()["is_active"])
+
     def test_forced_password_change_revokes_temporary_token_and_returns_new_one(self) -> None:
         temp_password = "Temporary-password-123!"
         with self.session_factory.begin() as session:
@@ -1352,14 +1457,34 @@ class APIAuthAndAuthorizationTests(unittest.TestCase):
         today_response = self.client.get("/api/v1/tasks?due=today", headers=headers)
         overdue_response = self.client.get("/api/v1/tasks?due=overdue", headers=headers)
         dashboard = self.client.get("/api/v1/dashboard/summary", headers=headers)
+        owner_tasks = self.client.get(
+            "/api/v1/tasks?limit=100",
+            headers=self.headers("owner@example.test"),
+        )
         self.assertEqual(today_response.status_code, 200)
         self.assertEqual(overdue_response.status_code, 200)
         self.assertEqual(dashboard.status_code, 200, dashboard.text)
+        self.assertEqual(owner_tasks.status_code, 200, owner_tasks.text)
         self.assertTrue(any(task["title"] == "Due today" for task in today_response.json()))
         self.assertTrue(any(task["title"] == "Overdue" for task in overdue_response.json()))
+        due_today_task = next(
+            task for task in today_response.json() if task["title"] == "Due today"
+        )
+        self.assertEqual(due_today_task["assigned_to_name"], "agent")
+        self.assertTrue(
+            any(
+                task["title"] == "Manager-created task"
+                and task["assigned_to_name"] == "other.agent"
+                for task in owner_tasks.json()
+            )
+        )
         self.assertEqual(dashboard.json()["timezone"], "Asia/Kolkata")
         self.assertEqual(dashboard.json()["due_today_count"], 1)
         self.assertEqual(dashboard.json()["overdue_count"], 1)
+        self.assertEqual(
+            dashboard.json()["due_today"][0]["assigned_to_name"],
+            "agent",
+        )
 
     def test_ai_score_is_scoped_and_persists_structured_score_and_usage(self) -> None:
         ai_result = AIResult(

@@ -32,6 +32,11 @@ token and data lifecycle, see [Authentication flow and user-data handling](./aut
 ### Roles and visibility
 
 - **Owner:** access to all leads, tasks, team members, and team administration.
+- **Co-owner:** `can_read` grants team-wide record visibility, `can_write`
+  grants write and assignment access, and `can_delete` governs record deletion
+  or user deactivation. `can_manage_users` separately grants agent-account
+  management. A co-owner without read permission can still access their own
+  profile and, when user management is enabled, the agent roster.
 - **Manager:** access to all team leads and tasks, and management of agent
   accounts; managers cannot view or manage owners or other managers through
   user administration.
@@ -74,10 +79,10 @@ response.
 | `POST /api/v1/auth/change-password` | Authenticated | Change your password and return a replacement `LoginResponse`. |
 | `GET /api/v1/auth/me` | Authenticated | Return the current `UserRead`. |
 | `PATCH /api/v1/auth/me/profile` | Authenticated | Update your own profile; currently supports `phone`. |
-| `GET /api/v1/users` | Owner, manager | List team accounts. Managers see agents only. |
-| `POST /api/v1/users` | Owner, manager | Create an account and return its one-time temporary password. Managers can create agents only. |
-| `PATCH /api/v1/users/{user_id}` | Owner, manager | Update a managed user's name, role, or active status. |
-| `POST /api/v1/users/{user_id}/password-reset` | Owner, manager | Reset a managed user's password and return the temporary password. |
+| `GET /api/v1/users` | Owner, manager, or co-owner with `can_manage_users` | List team accounts. Managers and co-owners see agents only. |
+| `POST /api/v1/users` | Owner, manager, or co-owner with `can_manage_users` | Create an account and return its one-time temporary password. Managers and co-owners can create agents only; owners can also create managers and co-owners. |
+| `PATCH /api/v1/users/{user_id}` | Owner, manager, or co-owner with `can_manage_users` | Owners may change roles, status, and co-owner permissions; managers and co-owners can update agent accounts only. Co-owner deactivation also requires `can_delete`. |
+| `POST /api/v1/users/{user_id}/password-reset` | Owner, manager, or co-owner with `can_manage_users` | Reset a permitted account's password and return the temporary password. |
 | `POST /api/v1/users/password-reset-all` | Owner | Reset every account in the team and download a CSV of temporary passwords. |
 
 Account creation, individual password resets, role changes, and activation
@@ -114,16 +119,27 @@ contains the replacement token.
 ### User fields and filters
 
 `UserRead` contains `id`, `team_id`, `full_name`, `email`, `phone`, `role`,
+`is_superuser`, `can_read`, `can_write`, `can_delete`, `can_manage_users`,
 `is_active`, and `must_change_password`. Password hashes are never returned.
 
 `GET /api/v1/users` accepts `limit` (1-100, default 50), `offset` (default 0),
 and optional `is_active` (`true` or `false`).
 
-Create a user with `full_name`, `email`, and `role` (`owner`, `manager`, or
-`agent`). `PATCH /api/v1/users/{user_id}` accepts one or more of `full_name`,
-`role`, and `is_active`. Omit fields that should not change. Managers may not
-change roles. The team must retain an active owner, and an owner cannot
-deactivate themselves.
+Create a user with `full_name`, `email`, and `role` (`agent`, `manager`, or
+`co_owner`). Owners can create each role; managers and co-owners with `can_manage_users`
+can create agents only. Owners may include `can_read`, `can_write`,
+`can_delete`, and `can_manage_users` when creating a co-owner. Defaults are
+read/write enabled and delete/user management disabled. These four global
+switches apply to all authenticated CRM resources; a user-management grant
+allows access to the agent roster even if CRM read access is off.
+
+`PATCH /api/v1/users/{user_id}` accepts one or more of `full_name`, `role`,
+`is_active`, and (for co-owners, by an owner only) the four permission fields.
+Omit fields that should not change. Managers and user-enabled co-owners can
+only manage agents. The team must retain an active owner, and an owner cannot
+deactivate themselves. Deactivating a user is treated as a delete-level
+operation for co-owners; hard-delete endpoints are not currently exposed.
+`is_superuser` is never set through these API requests.
 
 For bulk reset, submit `{"confirmation":"RESET ALL"}`. The response is a
 `text/csv` attachment named `urbannest-password-resets.csv`; it contains
@@ -140,7 +156,7 @@ sessions and requires users to change their temporary passwords.
 | `PATCH /api/v1/leads/{lead_id}` | Authenticated | Partially update one visible lead. |
 | `GET /api/v1/leads/{lead_id}/activities` | Authenticated | List the lead's activities, newest first. |
 | `POST /api/v1/leads/{lead_id}/activities` | Authenticated | Add an activity; returns `ActivityRead` with status 201. |
-| `POST /api/v1/leads/import` | Owner, manager | Import leads from a CSV file and return per-row results. |
+| `POST /api/v1/leads/import` | Owner, manager, or writable co-owner | Import leads from a CSV file and return per-row results. |
 | `POST /api/v1/public/leads` | Public | Submit a website inquiry; returns `LeadRead` with status 201. |
 
 `LeadRead` includes `id`, `team_id`, `assigned_to`, `created_by`, `full_name`,
@@ -166,8 +182,8 @@ Lead create fields are `full_name` (required), and optional `email`, `phone`,
 `source` (default `manual`), `status` (default `new`), `budget_min_inr`,
 `budget_max_inr`, `bhk`, `preferred_location`, `notes`, and `assigned_to`.
 Agents are automatically assigned their own leads and cannot assign leads to
-other users. Managers and owners can assign a lead to an active member of
-their team. In a PATCH, omitted fields are unchanged; nullable contact,
+other users. Managers, owners, and co-owners with write access can assign a
+lead to an active member of their team. In a PATCH, omitted fields are unchanged; nullable contact,
 budget, location, notes, and assignee fields can be cleared with `null`.
 
 Activities have `type` (`call`, `note`, `site_visit`, `status_change`, `email`,
@@ -198,11 +214,11 @@ valid backend `PUBLIC_LEAD_TEAM_ID`; misconfiguration returns 503.
 
 | Method and path | Access | Purpose and response |
 |---|---|---|
-| `GET /api/v1/tasks` | Authenticated | List visible tasks, open by default. |
+| `GET /api/v1/tasks` | Authenticated | List visible tasks with `assigned_to_name`, open by default. |
 | `POST /api/v1/tasks` | Authenticated | Create an open follow-up task; returns status 201. |
 | `GET /api/v1/tasks/{task_id}` | Authenticated | Read one visible task. |
-| `PATCH /api/v1/tasks/{task_id}` | Authenticated | Change task status; managers and owners can also reassign it. |
-| `GET /api/v1/dashboard/summary` | Authenticated | Return role-scoped lead and task summary data. |
+| `PATCH /api/v1/tasks/{task_id}` | Authenticated | Change task status; managers, owners, and writable co-owners can also reassign it. |
+| `GET /api/v1/dashboard/summary` | Authenticated | Return role-scoped lead and task summary data, including assignee names for due/overdue tasks. |
 
 Task listing accepts `limit` (1-100, default 50), `offset` (default 0),
 `status` (`open`, `completed`, or `cancelled`; defaults to `open`) and `due`
@@ -212,7 +228,8 @@ returns 422.
 
 Task creation accepts `lead_id`, `title`, timezone-aware `due_at`, and optional
 `description` and `assigned_to`. Agents can only create tasks for themselves.
-Task updates accept `status` and, for managers/owners only, `assigned_to`.
+Task updates accept `status` and, for managers/owners or writable co-owners,
+`assigned_to`.
 `TaskRead` includes IDs for the task, team, lead, assignee, and creator; title,
 description, due time, status, completion time, and creation/update times.
 

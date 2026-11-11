@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import func, select
 
 from app.core.dependencies import CurrentUser, DatabaseSession
-from app.db.models import Lead, LeadStatus, Task, TaskStatus, UserRole
+from app.db.models import Lead, LeadStatus, Task, TaskStatus, User, UserRole
 from app.modules.dashboard.schemas import DashboardSummary, DashboardTask
 from app.modules.tasks.router import accessible_task_statement
 
@@ -63,7 +63,8 @@ def get_dashboard_summary(
     def tasks_in_range(*conditions):
         query = (
             visible_tasks.where(*conditions)
-            .add_columns(Lead.full_name, Lead.status)
+            .join(User, (Task.assigned_to == User.id) & (Task.team_id == User.team_id))
+            .add_columns(Lead.full_name, Lead.status, User.full_name)
             .order_by(Task.due_at.asc())
         )
         return [
@@ -71,6 +72,7 @@ def get_dashboard_summary(
                 id=row[0].id,
                 lead_id=row[0].lead_id,
                 lead_name=row[1],
+                assigned_to_name=row[3],
                 lead_status=row[2],
                 title=row[0].title,
                 due_at=row[0].due_at,

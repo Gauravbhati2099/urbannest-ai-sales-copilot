@@ -3,7 +3,7 @@ const API_PREFIX = `${API_ROOT}/api/v1`
 
 export type LeadStatus = 'new' | 'contacted' | 'site_visit' | 'negotiation' | 'won' | 'lost'
 export type LeadSource = 'website' | '99acres' | 'magicbricks' | 'instagram' | 'whatsapp' | 'walk_in' | 'manual' | 'csv_import' | 'other'
-export type UserRole = 'owner' | 'manager' | 'agent'
+export type UserRole = 'owner' | 'co_owner' | 'manager' | 'agent'
 export type TaskStatus = 'open' | 'completed' | 'cancelled'
 
 export interface User {
@@ -13,6 +13,11 @@ export interface User {
   email: string
   phone: string | null
   role: UserRole
+  is_superuser: boolean
+  can_read: boolean
+  can_write: boolean
+  can_delete: boolean
+  can_manage_users: boolean
   is_active: boolean
   must_change_password: boolean
 }
@@ -58,6 +63,7 @@ export interface Task {
   team_id: string
   lead_id: string
   assigned_to: string
+  assigned_to_name: string
   created_by: string
   title: string
   description: string | null
@@ -73,6 +79,7 @@ export interface DashboardTask {
   id: string
   lead_id: string
   lead_name: string
+  assigned_to_name: string
   lead_status: LeadStatus
   title: string
   due_at: string
@@ -115,12 +122,20 @@ export interface UserCreateRequest {
   full_name: string
   email: string
   role: UserRole
+  can_read?: boolean
+  can_write?: boolean
+  can_delete?: boolean
+  can_manage_users?: boolean
 }
 
 export interface UserUpdateRequest {
   full_name?: string
   role?: UserRole
   is_active?: boolean
+  can_read?: boolean
+  can_write?: boolean
+  can_delete?: boolean
+  can_manage_users?: boolean
 }
 
 export interface ProfileUpdateRequest {

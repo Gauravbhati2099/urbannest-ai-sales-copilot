@@ -829,6 +829,12 @@ h1, h2, h3, p { margin-top: 0; }
 .member-actions .button { min-height: 30px; padding: 0 9px; font-size: 9px; }
 .team-create-form { grid-template-columns: 1fr 1fr minmax(110px, .65fr) auto; align-items: end; margin: 18px 0; padding: 15px; border: 1px solid var(--line); border-radius: 9px; background: var(--canvas); }
 .team-create-form .button { white-space: nowrap; }
+.co-owner-permissions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 0; padding: 10px; border: 1px solid var(--line); border-radius: 7px; }
+.co-owner-permissions legend { padding: 0 5px; color: #66776b; font-size: 9px; font-weight: 700; }
+.permission-checkbox { display: inline-flex !important; grid-auto-flow: column; align-items: center; gap: 6px !important; color: #66776b !important; font-size: 9px !important; }
+.permission-checkbox input { width: 14px; min-height: 14px; margin: 0; accent-color: var(--green); }
+.member-permissions { grid-column: 2 / -1; display: flex; flex-wrap: wrap; gap: 8px 14px; }
+.member-permissions .permission-checkbox { font-size: 8px !important; }
 .temporary-password-card { display: flex; justify-content: space-between; gap: 14px; margin: 16px 0; padding: 14px; border: 1px solid #f1c8b9; border-radius: 8px; color: #774a3f; background: #fff5f1; }
 .temporary-password-card strong { font-size: 10px; }
 .temporary-password-card p { margin: 5px 0 8px; color: #986e62; font-size: 9px; }

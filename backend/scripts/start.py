@@ -20,6 +20,10 @@ sys.path.insert(0, str(BACKEND_ROOT))
 from app.core.rate_limit import rate_limit_setting
 from app.core.security import get_auth_settings
 from app.db.config import get_database_url, get_pool_options
+from scripts.bootstrap_dev_superuser import (
+    bootstrap_dev_superuser,
+    dev_superuser_settings_from_environment,
+)
 
 
 logger = logging.getLogger("urbannest.startup")
@@ -38,6 +42,7 @@ def _validate_configuration() -> int:
     get_database_url()
     get_pool_options()
     get_auth_settings()
+    dev_superuser_settings_from_environment()
     for name, default in RATE_LIMIT_SETTINGS:
         rate_limit_setting(name, default)
 
@@ -134,6 +139,20 @@ def main() -> None:
     logger.info("Database connection check passed")
     _upgrade_and_verify_schema()
     logger.info("Database migrations are up to date")
+    superuser_settings = dev_superuser_settings_from_environment()
+    if superuser_settings is not None:
+        from app.db.session import SessionLocal
+
+        with SessionLocal.begin() as session:
+            created = bootstrap_dev_superuser(session, superuser_settings)
+        logger.info(
+            "Development superuser bootstrap %s",
+            (
+                "created the configured account"
+                if created
+                else "verified the configured account"
+            ),
+        )
 
     import uvicorn
 

@@ -47,6 +47,7 @@ class TaskRead(BaseModel):
     team_id: UUID
     lead_id: UUID
     assigned_to: UUID
+    assigned_to_name: str
     created_by: UUID
     title: str
     description: str | None

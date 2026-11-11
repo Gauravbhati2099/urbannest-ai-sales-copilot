@@ -12,6 +12,7 @@ class DashboardTask(BaseModel):
     id: UUID
     lead_id: UUID
     lead_name: str
+    assigned_to_name: str
     lead_status: LeadStatus
     title: str
     due_at: datetime

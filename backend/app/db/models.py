@@ -43,6 +43,7 @@ def enum_type(enum_class: type[Enum], name: str) -> SqlEnum:
 
 class UserRole(str, Enum):
     OWNER = "owner"
+    CO_OWNER = "co_owner"
     MANAGER = "manager"
     AGENT = "agent"
 
@@ -166,6 +167,21 @@ class User(TimestampMixin, Base):
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[UserRole] = mapped_column(
         enum_type(UserRole, "user_role"), nullable=False
+    )
+    is_superuser: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    can_read: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("true")
+    )
+    can_write: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("true")
+    )
+    can_delete: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    can_manage_users: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
     )
     is_active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default=text("true")
@@ -466,6 +482,10 @@ class Task(TimestampMixin, Base):
         foreign_keys=[created_by],
         primaryjoin=lambda: and_(Task.created_by == User.id, Task.team_id == User.team_id),
     )
+
+    @property
+    def assigned_to_name(self) -> str:
+        return self.assignee.full_name
 
 
 class AuditEvent(CreatedAtMixin, Base):

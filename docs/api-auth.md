@@ -33,10 +33,10 @@ from a browser are never trusted and deactivated accounts are rejected.
 | `GET` | `/api/v1/auth/me` | Authenticated user's current profile, email, optional phone, and role |
 | `PATCH` | `/api/v1/auth/me/profile` | Authenticated user updates or clears their own optional phone number |
 | `POST` | `/api/v1/auth/change-password` | Authenticated; verifies current password, changes password and invalidates prior tokens |
-| `GET` | `/api/v1/users` | Owner/manager team roster; manager sees agents only; supports pagination and active filter |
-| `POST` | `/api/v1/users` | Owner can provision team roles; manager can provision agents; returns one-time temporary password |
-| `PATCH` | `/api/v1/users/{user_id}` | Owner can change roles/status; manager can update/deactivate agents only |
-| `POST` | `/api/v1/users/{user_id}/password-reset` | Owner/manager issues one-time temporary password; all existing sessions are revoked |
+| `GET` | `/api/v1/users` | Owner/manager roster; managers and co-owners with `can_manage_users` see agents only; supports pagination and active filter |
+| `POST` | `/api/v1/users` | Owner can provision agents, managers, and co-owners; managers and user-enabled co-owners can provision agents; returns one-time temporary password |
+| `PATCH` | `/api/v1/users/{user_id}` | Owner can change roles/status and co-owner permissions; managers and user-enabled co-owners can update agents, with deactivation requiring co-owner delete permission |
+| `POST` | `/api/v1/users/{user_id}/password-reset` | Owner, manager, or user-enabled co-owner resets a permitted account's password; all existing sessions are revoked |
 | `POST` | `/api/v1/users/password-reset-all` | Owner only; requires `{"confirmation":"RESET ALL"}`, resets every team account (including inactive and owner accounts), and returns a no-store CSV with one-time temporary passwords and roles |
 | `GET` | `/api/v1/audit/events` | Paginated shared audit feed; event visibility is filtered by role and accessible leads |
 | `GET` | `/api/v1/audit/unread-count` | Current user's unread count within their authorized audit feed |
@@ -45,20 +45,20 @@ from a browser are never trusted and deactivated accounts are rejected.
 | `GET` | `/api/v1/leads` | Team-scoped; filters: `status`, `source`, `assigned_to`, `q`, `location`, budget range; agents see assigned leads |
 | `POST` | `/api/v1/leads` | Authenticated lead creation; an agent's lead is assigned to that agent |
 | `GET` | `/api/v1/leads/{lead_id}` | Same record visibility as the lead list; inaccessible IDs return `404` |
-| `PATCH` | `/api/v1/leads/{lead_id}` | Visible lead only; managers/owners may reassign within the active team |
+| `PATCH` | `/api/v1/leads/{lead_id}` | Visible lead only; managers, owners, and writable co-owners may reassign within the active team |
 | `GET` | `/api/v1/leads/{lead_id}/activities` | Timeline only for a visible lead |
 | `POST` | `/api/v1/leads/{lead_id}/activities` | Adds an authenticated actor's timeline entry and marks existing scores stale |
-| `POST` | `/api/v1/leads/import` | UTF-8 CSV upload; manager/owner only; at most 2 MB / 500 rows; returns row-level errors |
+| `POST` | `/api/v1/leads/import` | UTF-8 CSV upload; manager, owner, or writable co-owner; at most 2 MB / 500 rows; returns row-level errors |
 | `POST` | `/api/v1/public/leads` | Public website lead form; team comes from `PUBLIC_LEAD_TEAM_ID`; shared PostgreSQL rate-limited |
 | `GET` | `/api/v1/leads/{lead_id}/ai/score` | Latest visible lead score, including stale state; returns `null` before scoring |
 | `POST` | `/api/v1/leads/{lead_id}/ai/score` | Scores a visible lead, stores structured score history and usage metadata |
 | `POST` | `/api/v1/leads/{lead_id}/ai/draft` | Drafts a visible lead's follow-up; saves as an editable `draft`, never sends |
 | `POST` | `/api/v1/leads/{lead_id}/ai/extract` | Returns validated proposed property/task fields for user confirmation; does not save them |
-| `GET` | `/api/v1/dashboard/summary` | Role-scoped pipeline totals, open-task counts, and due-today/overdue task lists |
-| `GET` | `/api/v1/tasks` | Managers/owners see team tasks; agents see tasks on their assigned leads; defaults to `status=open`; supports `status=open\|completed\|cancelled` and timezone-aware `due=today\|overdue` filters |
+| `GET` | `/api/v1/dashboard/summary` | Role-scoped pipeline totals, open-task counts, and due-today/overdue task lists with assignee names; co-owners require read access |
+| `GET` | `/api/v1/tasks` | Managers/owners and readable co-owners see team tasks; agents see tasks on their assigned leads; responses include `assigned_to_name`; defaults to `status=open`; supports `status=open\|completed\|cancelled` and timezone-aware `due=today\|overdue` filters |
 | `GET` | `/api/v1/tasks/{task_id}` | Returns a task only when the caller can access its lead and task assignment |
-| `POST` | `/api/v1/tasks` | Creates a task for a visible lead; assignee must be active and in the same team |
-| `PATCH` | `/api/v1/tasks/{task_id}` | Managers/owners may update/reassign team tasks; agents may update their own assigned tasks |
+| `POST` | `/api/v1/tasks` | Creates a task for a visible lead; assignee must be active and in the same team; co-owners require write access |
+| `PATCH` | `/api/v1/tasks/{task_id}` | Managers, owners, and writable co-owners may update/reassign team tasks; agents may update their own assigned tasks |
 
 Lead and task lists are paginated with `limit` (1–100) and `offset` query
 parameters. Clients must not send `team_id`, `created_by`, `actor_id`, or role
@@ -77,20 +77,42 @@ open tasks; combine `due=today` or `due=overdue` with the default status or
   update tasks assigned to self.
 - **Manager:** reads and updates leads and tasks in their team; can assign leads
   and task ownership to active same-team users.
+- **Co-owner:** `can_read` grants team-wide record visibility, `can_write`
+  grants write and manager-like assignment access, and `can_delete` governs
+  record deletion or user deactivation. `can_manage_users` separately grants
+  access to manage agent accounts. Disabling a co-owner's read access does not
+  prevent access to their own profile or an explicitly enabled agent roster.
 - **Owner:** same team-wide record access and assignment capabilities as a
   manager. Cross-team records are never exposed.
+- **Development superuser:** an owner-level account scoped to its configured
+  development team. It is bootstrapped only with explicit environment settings
+  and only while `APP_ENV=development`; it does not bypass team boundaries.
 
 ## User provisioning and password recovery
 
-There is no public registration. Owners can provision team users, including
-managers and agents; managers can provision agents only. Only owners can change
-roles. Managers can update or deactivate agent accounts, but cannot manage
-owners or other managers. User-management routes never accept a team ID from
-the client; accounts are created in the acting administrator's team.
-Provisioning validates and normalizes names and email addresses, accepts only
-the defined roles, and rejects unexpected request fields. Invalid or expired
+There is no public registration. Owners can provision agents, managers, and
+co-owners; managers and co-owners with `can_manage_users` can provision agents
+only. Only owners can change roles or configure co-owner permissions. Managers
+and user-enabled co-owners can update, reset, or deactivate agent accounts,
+but cannot manage owners or other managers. Co-owner `can_read`, `can_write`,
+and `can_delete` permissions apply globally to authenticated CRM resources;
+user deactivation requires delete permission. There are currently no hard
+delete endpoints. User-management routes never accept a team ID from the
+client; accounts are created in the acting administrator's team. Provisioning
+validates and normalizes names and email addresses, accepts only the defined
+roles, and rejects unexpected request fields. Invalid or expired
 bearer tokens are rejected with `401`; an identifier such as
 `PUBLIC_LEAD_TEAM_ID` is configuration, not an authentication credential.
+
+To opt into development superuser bootstrap, set
+`DEV_SUPERUSER_BOOTSTRAP=true`, `APP_ENV=development`,
+`DEV_SUPERUSER_EMAIL`, `DEV_SUPERUSER_PASSWORD`,
+`DEV_SUPERUSER_FULL_NAME`, and `DEV_SUPERUSER_TEAM` in the backend environment.
+The password must be at least 12 characters. Startup creates the configured
+team if needed and creates an owner-level superuser once; it will not reset an
+existing account's password. The bootstrap refuses to run outside
+`APP_ENV=development`, and credentials are never logged. Leave the option
+disabled and remove these variables outside local development.
 
 New accounts and administrative password resets receive a randomly generated
 temporary password in the response exactly once and must change it before
@@ -122,7 +144,7 @@ Each change creates one `audit_events` row for the team. Events are not
 duplicated per user. `audit_read_cursors` stores at most one read timestamp per
 user; marking events read changes that cursor, not the shared event rows.
 
-- Owners and managers can see all events in their team.
+- Owners, managers, and readable co-owners can see all events in their team.
 - Agents can see team events without a lead association, events for leads
   currently assigned to them, and their own actor-only events.
 - Agent account/security changes are admin-only; owners and managers can see
@@ -193,6 +215,5 @@ deployment, these are enforced by the API against shared PostgreSQL counters;
 no separate pre-app gateway rule is configured in this repository. Add a
 gateway that supports per-path limits if an additional edge layer is required.
 
-There is currently no frontend application in this workspace, so frontend
-integration is pending the teammate's app/repository. The endpoints above and
-`/docs` are the API handoff contract.
+The frontend API guide is in [frontend-api.md](./frontend-api.md); the endpoints
+above and `/docs` are the API handoff contract.

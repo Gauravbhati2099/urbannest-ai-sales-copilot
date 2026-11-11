@@ -32,6 +32,11 @@ class UserRead(BaseModel):
     email: str
     phone: str | None
     role: UserRole
+    is_superuser: bool
+    can_read: bool
+    can_write: bool
+    can_delete: bool
+    can_manage_users: bool
     is_active: bool
     must_change_password: bool
 
@@ -63,6 +68,10 @@ class UserCreateRequest(BaseModel):
     full_name: str = Field(min_length=1, max_length=160)
     email: str = Field(min_length=3, max_length=320)
     role: UserRole
+    can_read: bool | None = None
+    can_write: bool | None = None
+    can_delete: bool | None = None
+    can_manage_users: bool | None = None
 
     @field_validator("full_name")
     @classmethod
@@ -87,6 +96,10 @@ class UserUpdateRequest(BaseModel):
     full_name: str | None = Field(default=None, min_length=1, max_length=160)
     role: UserRole | None = None
     is_active: bool | None = None
+    can_read: bool | None = None
+    can_write: bool | None = None
+    can_delete: bool | None = None
+    can_manage_users: bool | None = None
 
     @field_validator("full_name")
     @classmethod

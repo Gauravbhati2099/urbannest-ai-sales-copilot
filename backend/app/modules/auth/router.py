@@ -12,7 +12,11 @@ from pwdlib import PasswordHash
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
-from app.core.dependencies import CurrentUser, DatabaseSession
+from app.core.dependencies import (
+    CurrentUser,
+    DatabaseSession,
+    can_manage_team_users,
+)
 from app.core.rate_limit import (
     clear_rate_limit,
     client_address,
@@ -39,7 +43,13 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 users_router = APIRouter(prefix="/users", tags=["user administration"])
 password_hash = PasswordHash.recommended()
 DUMMY_PASSWORD_HASH = password_hash.hash("unmatched-user-password-check")
-MANAGER_ROLES = {UserRole.OWNER, UserRole.MANAGER}
+OWNER_MANAGED_ROLES = {UserRole.AGENT, UserRole.MANAGER, UserRole.CO_OWNER}
+CO_OWNER_PERMISSION_FIELDS = {
+    "can_read",
+    "can_write",
+    "can_delete",
+    "can_manage_users",
+}
 
 
 def _not_found() -> HTTPException:
@@ -62,7 +72,11 @@ def _managed_user(
     )
     if user is None:
         raise _not_found()
-    if manager.role is UserRole.MANAGER and user.role is not UserRole.AGENT:
+    if (
+        manager.role in {UserRole.MANAGER, UserRole.CO_OWNER}
+        and not manager.is_superuser
+        and user.role is not UserRole.AGENT
+    ):
         raise _not_found()
     return user
 
@@ -223,11 +237,11 @@ def list_team_users(
     offset: Annotated[int, Query(ge=0)] = 0,
     is_active: bool | None = None,
 ) -> list[User]:
-    """List team accounts; owners see all roles and managers see agents only."""
-    if current_user.role not in MANAGER_ROLES:
+    """List team accounts; owners see all roles and user managers see agents."""
+    if not can_manage_team_users(current_user):
         raise HTTPException(status_code=403, detail="Forbidden")
     statement = select(User).where(User.team_id == current_user.team_id)
-    if current_user.role is UserRole.MANAGER:
+    if current_user.role in {UserRole.MANAGER, UserRole.CO_OWNER} and not current_user.is_superuser:
         statement = statement.where(User.role == UserRole.AGENT)
     if is_active is not None:
         statement = statement.where(User.is_active.is_(is_active))
@@ -245,10 +259,25 @@ def create_team_user(
     session: DatabaseSession,
 ) -> UserCreatedResponse:
     """Create an active team account and return its one-time temporary password."""
-    if current_user.role not in MANAGER_ROLES:
+    if not can_manage_team_users(current_user):
         raise HTTPException(status_code=403, detail="Forbidden")
-    if current_user.role is UserRole.MANAGER and payload.role is not UserRole.AGENT:
-        raise HTTPException(status_code=403, detail="Managers may only create agents")
+    owner_access = current_user.role is UserRole.OWNER or current_user.is_superuser
+    if owner_access and payload.role not in OWNER_MANAGED_ROLES:
+        raise HTTPException(status_code=403, detail="Owners may create agents, managers, or co-owners")
+    if not owner_access and payload.role is not UserRole.AGENT:
+        raise HTTPException(status_code=403, detail="Only owners may create managers or co-owners")
+    supplied_permissions = CO_OWNER_PERMISSION_FIELDS.intersection(
+        payload.model_fields_set
+    )
+    if supplied_permissions and (
+        not owner_access or payload.role is not UserRole.CO_OWNER
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Only owners may configure permissions for co-owners",
+        )
+    if any(getattr(payload, field) is None for field in supplied_permissions):
+        raise HTTPException(status_code=422, detail="Co-owner permissions cannot be null")
     team = session.scalar(select(Team).where(Team.id == current_user.team_id))
     if team is None:
         raise HTTPException(status_code=409, detail="User team no longer exists")
@@ -260,6 +289,14 @@ def create_team_user(
         email=payload.email,
         password_hash=password_hash.hash(temporary_password),
         role=payload.role,
+        can_read=payload.can_read if payload.can_read is not None else True,
+        can_write=payload.can_write if payload.can_write is not None else True,
+        can_delete=payload.can_delete if payload.can_delete is not None else False,
+        can_manage_users=(
+            payload.can_manage_users
+            if payload.can_manage_users is not None
+            else False
+        ),
         is_active=True,
         auth_version=0,
         must_change_password=True,
@@ -301,7 +338,7 @@ def update_team_user(
     session: DatabaseSession,
 ) -> UserRead:
     """Update a managed account's name, role, or active status."""
-    if current_user.role not in MANAGER_ROLES:
+    if not can_manage_team_users(current_user):
         raise HTTPException(status_code=403, detail="Forbidden")
     user = _managed_user(session, current_user, user_id)
     changes = payload.model_dump(exclude_unset=True)
@@ -309,10 +346,44 @@ def update_team_user(
         raise HTTPException(status_code=422, detail="Provide at least one field to update")
     if any(value is None for value in changes.values()):
         raise HTTPException(status_code=422, detail="User fields cannot be null")
-    if current_user.role is UserRole.MANAGER and "role" in changes:
+    owner_access = current_user.role is UserRole.OWNER or current_user.is_superuser
+    if not owner_access and "role" in changes:
         raise HTTPException(status_code=403, detail="Only owners may change user roles")
+    if "role" in changes and changes["role"] not in OWNER_MANAGED_ROLES | {UserRole.OWNER}:
+        raise HTTPException(status_code=422, detail="Unsupported user role")
+    permission_fields = CO_OWNER_PERMISSION_FIELDS.intersection(changes)
+    target_role = changes.get("role", user.role)
+    if permission_fields and (
+        not owner_access or target_role is not UserRole.CO_OWNER
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Only owners may configure permissions for co-owners",
+        )
+    if target_role is UserRole.CO_OWNER and user.role is not UserRole.CO_OWNER:
+        for field, value in (
+            ("can_read", True),
+            ("can_write", True),
+            ("can_delete", False),
+            ("can_manage_users", False),
+        ):
+            changes.setdefault(field, value)
+    if user.role is UserRole.CO_OWNER and target_role is not UserRole.CO_OWNER:
+        for field, value in (
+            ("can_read", True),
+            ("can_write", True),
+            ("can_delete", False),
+            ("can_manage_users", False),
+        ):
+            changes.setdefault(field, value)
     if user.id == current_user.id and changes.get("is_active") is False:
         raise HTTPException(status_code=409, detail="You cannot deactivate your own account")
+    if (
+        current_user.role is UserRole.CO_OWNER
+        and changes.get("is_active") is False
+        and not current_user.can_delete
+    ):
+        raise HTTPException(status_code=403, detail="Delete access is required to deactivate users")
     _ensure_active_owner_remains(
         session,
         user,
@@ -322,6 +393,10 @@ def update_team_user(
     should_revoke_sessions = (
         ("role" in changes and changes["role"] != user.role)
         or changes.get("is_active") is False
+        or any(
+            field in changes and changes[field] != getattr(user, field)
+            for field in CO_OWNER_PERMISSION_FIELDS
+        )
     )
     audit_changes = {}
     for field, value in changes.items():
@@ -337,6 +412,8 @@ def update_team_user(
             audit_changes[field] = {"from": old_value, "to": value}
         elif field == "full_name":
             audit_changes[field] = {"changed": True}
+        elif field in CO_OWNER_PERMISSION_FIELDS:
+            audit_changes[field] = {"from": old_value, "to": value}
         setattr(user, field, value)
     if should_revoke_sessions:
         user.auth_version += 1
@@ -365,7 +442,7 @@ def reset_user_password(
     session: DatabaseSession,
 ) -> PasswordResetResponse:
     """Reset another active team member's password and revoke their sessions."""
-    if current_user.role not in MANAGER_ROLES:
+    if not can_manage_team_users(current_user):
         raise HTTPException(status_code=403, detail="Forbidden")
     user = _managed_user(session, current_user, user_id)
     if user.id == current_user.id:
@@ -404,7 +481,7 @@ def reset_all_team_passwords(
     session: DatabaseSession,
 ) -> Response:
     """Reset every team account and return the temporary passwords as a CSV download."""
-    if current_user.role is not UserRole.OWNER:
+    if current_user.role is not UserRole.OWNER and not current_user.is_superuser:
         raise HTTPException(
             status_code=403,
             detail="Only owners may reset all team passwords",

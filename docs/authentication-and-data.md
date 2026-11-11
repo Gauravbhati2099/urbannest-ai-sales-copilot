@@ -11,7 +11,7 @@ complements the [frontend API guide](./frontend-api.md) and
 sequenceDiagram
     autonumber
     actor User
-    actor Admin as Owner or manager
+    actor Admin as Owner, manager, or co-owner
     participant UI as React frontend
     participant API as FastAPI API
     participant DB as PostgreSQL
@@ -31,7 +31,7 @@ sequenceDiagram
         UI->>API: Request with Authorization: Bearer token
         API->>API: Verify JWT signature, issuer, expiry, user ID and version
         API->>DB: Reload active user and current role/team
-        API->>API: Enforce role, team and record visibility
+        API->>API: Enforce team, role and co-owner permissions
         API-->>UI: Authorized response or 401/403/404
     end
 
@@ -91,8 +91,8 @@ validation.
 |---|---|
 | Passwords | Sent in request bodies (use HTTPS in production); stored in PostgreSQL only as Argon2 hashes. Temporary passwords are generated server-side and returned only for the creation/reset operation. Existing passwords cannot be retrieved. |
 | Access tokens | Signed JWTs include the user ID, authentication version, issuer, and expiry. The frontend keeps the current token in tab-scoped `sessionStorage`, sends it in the bearer header, and removes it on sign-out. The token is not used as a source of role/team permissions. |
-| User profile | PostgreSQL holds the account's team, name, email, optional phone, role, active state, password hash, and auth-version/password-change flags. API user responses omit the password hash and other authentication secrets. |
-| Authorization | The backend derives the acting user, team, and role from the verified token and database row. Queries are team-scoped; agent records are further scoped to assignment. Manager/owner restrictions are checked on each account-management operation. |
+| User profile | PostgreSQL holds the account's team, name, email, optional phone, role, active state, password hash, superuser flag, four co-owner permission flags, and auth-version/password-change flags. API user responses omit the password hash and other authentication secrets. |
+| Authorization | The backend derives the acting user, team, role, and current permission flags from the verified token and database row. Queries remain team-scoped; agent records are further scoped to assignment. Co-owner read/write/delete permissions apply to authenticated CRM routes, while `can_manage_users` separately grants management of agent accounts. |
 | Login limits | Shared fixed-window counters are stored in PostgreSQL. Email/IP keys are HMACed with the JWT secret before storage; raw email addresses and IP addresses are not written to the counter table. |
 | Audit records | Account and password-security actions create audit events. Audit change data is designed to omit passwords, contact details, lead notes, and task descriptions. User-facing responses do not include password hashes. |
 | Browser preferences | Theme and sidebar preferences use `localStorage`; the bearer token uses `sessionStorage`. Temporary passwords are held in frontend page state for display and are not intentionally saved to browser storage. |
@@ -110,7 +110,13 @@ validation.
   them into support tickets, commit them, or send them through untrusted
   channels.
 - The application has no email-based self-service password reset configured.
-  An owner or manager must issue a reset for another user.
+  An owner, manager, or user-enabled co-owner must issue a reset for another
+  user.
+- A development superuser is an owner-level account limited to its configured
+  development team. Startup creates it only when `DEV_SUPERUSER_BOOTSTRAP=true`,
+  all `DEV_SUPERUSER_*` fields are provided, and `APP_ENV=development`.
+  Credentials are hashed before storage and are not logged. The bootstrap is
+  idempotent and refuses to change an existing account's password.
 - No automatic application-level user-data retention/deletion policy is
   implemented here. Database retention, backups, provider-side AI data
   handling, and production credential rotation should be configured for the

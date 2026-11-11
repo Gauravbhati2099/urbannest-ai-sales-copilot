@@ -243,7 +243,24 @@ function App() {
     }
   }, [signOut, token])
 
-  const currentRole = user?.role
+  const canReadWorkspace = !user
+    || user.is_superuser
+    || user.role !== 'co_owner'
+    || user.can_read
+  const canWriteWorkspace = !user
+    || user.is_superuser
+    || user.role !== 'co_owner'
+    || user.can_write
+  const canManageTeam = Boolean(user && (
+    user.is_superuser
+    || user.role === 'owner'
+    || user.role === 'manager'
+    || (user.role === 'co_owner' && user.can_manage_users)
+  ))
+  const activePage = !canReadWorkspace && page !== 'team' && page !== 'profile'
+    ? canManageTeam ? 'team' : 'profile'
+    : page
+
   const refresh = useCallback(async () => {
     if (!token) return
     refreshControllerRef.current?.abort()
@@ -251,11 +268,27 @@ function App() {
     refreshControllerRef.current = controller
     dispatch({ type: 'refresh-started' })
     try {
+      if (!canReadWorkspace) {
+        const users = canManageTeam
+          ? await api<User[]>('/users?limit=100', token, { signal: controller.signal })
+          : []
+        dispatch({
+          type: 'refresh-succeeded',
+          dashboard: null,
+          leads: [],
+          tasks: [],
+          completedTasks: [],
+          teamUsers: users,
+          events: [],
+          unreadCount: 0,
+        })
+        return
+      }
       const params = new URLSearchParams({ limit: '100' })
       if (debouncedQuery) params.set('q', debouncedQuery)
       if (statusFilter) params.set('status', statusFilter)
       const requestOptions = { signal: controller.signal }
-      const usersRequest = currentRole && currentRole !== 'agent'
+      const usersRequest = canManageTeam
         ? api<User[]>('/users?limit=100', token, requestOptions)
         : Promise.resolve([])
       const [summary, leadRows, taskRows, completedTaskRows, feed, users] = await Promise.all([
@@ -282,7 +315,7 @@ function App() {
     } finally {
       if (refreshControllerRef.current === controller) refreshControllerRef.current = null
     }
-  }, [currentRole, debouncedQuery, statusFilter, token])
+  }, [canManageTeam, canReadWorkspace, debouncedQuery, statusFilter, token])
 
   useEffect(() => {
     // eslint-disable-next-line react/set-state-in-effect -- Synchronizes server data with auth and search filters.
@@ -296,7 +329,7 @@ function App() {
     activity: 'Activity',
     team: 'Team',
     profile: 'My profile',
-  }[page]
+  }[activePage]
 
   const visibleTasks = useMemo(() => {
     if (taskFilter === 'completed') return completedTasks
@@ -469,7 +502,7 @@ function App() {
       }
       return
     }
-    setPage(event.entity_type === 'user' ? user?.role === 'agent' ? 'profile' : 'team' : 'activity')
+    setPage(event.entity_type === 'user' ? canManageTeam ? 'team' : 'profile' : 'activity')
   }
 
   const handleLogin = (response: LoginResponse) => {
@@ -503,15 +536,17 @@ function App() {
 
         <div className="nav-caption">WORKSPACE</div>
         <nav className="primary-nav" aria-label="Main navigation">
-          <NavButton label="Overview" icon={<LayoutDashboard size={18} />} active={page === 'overview'} onClick={() => { setPage('overview'); setMobileNavOpen(false) }}>Overview</NavButton>
-          <NavButton label="Leads" icon={<Users size={18} />} active={page === 'leads'} onClick={() => { setPage('leads'); setMobileNavOpen(false) }}>Leads<span className="nav-count">{dashboard?.total_leads ?? '—'}</span></NavButton>
-          <NavButton label="Follow-ups" icon={<CalendarDays size={18} />} active={page === 'tasks'} onClick={() => { setPage('tasks'); setMobileNavOpen(false) }}>Follow-ups</NavButton>
-          <NavButton label="Activity" icon={<ActivityIcon size={18} />} active={page === 'activity'} onClick={() => { setPage('activity'); setMobileNavOpen(false) }}>Activity{unreadCount > 0 && <span className="nav-count">{unreadCount > 9 ? '9+' : unreadCount}</span>}</NavButton>
-          {user.role !== 'agent' && <NavButton label="Team" icon={<UserRound size={18} />} active={page === 'team'} onClick={() => { setPage('team'); setMobileNavOpen(false) }}>Team</NavButton>}
+          {canReadWorkspace && <>
+            <NavButton label="Overview" icon={<LayoutDashboard size={18} />} active={activePage === 'overview'} onClick={() => { setPage('overview'); setMobileNavOpen(false) }}>Overview</NavButton>
+            <NavButton label="Leads" icon={<Users size={18} />} active={activePage === 'leads'} onClick={() => { setPage('leads'); setMobileNavOpen(false) }}>Leads<span className="nav-count">{dashboard?.total_leads ?? '—'}</span></NavButton>
+            <NavButton label="Follow-ups" icon={<CalendarDays size={18} />} active={activePage === 'tasks'} onClick={() => { setPage('tasks'); setMobileNavOpen(false) }}>Follow-ups</NavButton>
+            <NavButton label="Activity" icon={<ActivityIcon size={18} />} active={activePage === 'activity'} onClick={() => { setPage('activity'); setMobileNavOpen(false) }}>Activity{unreadCount > 0 && <span className="nav-count">{unreadCount > 9 ? '9+' : unreadCount}</span>}</NavButton>
+          </>}
+          {canManageTeam && <NavButton label="Team" icon={<UserRound size={18} />} active={activePage === 'team'} onClick={() => { setPage('team'); setMobileNavOpen(false) }}>Team</NavButton>}
         </nav>
 
         <div className="sidebar-bottom">
-          <button className={`user-profile ${page === 'profile' ? 'user-profile-active' : ''}`} onClick={() => { setPage('profile'); setMobileNavOpen(false) }} title="Open your profile">
+          <button className={`user-profile ${activePage === 'profile' ? 'user-profile-active' : ''}`} onClick={() => { setPage('profile'); setMobileNavOpen(false) }} title="Open your profile">
             <span className="avatar avatar-user">{initials(user.full_name)}</span>
             <span className="user-meta"><strong>{user.full_name}</strong><span>{user.role}</span></span>
             <UserRound className="profile-indicator" size={16} />
@@ -531,9 +566,9 @@ function App() {
           <div className="topbar-actions">
             <div className={`api-indicator ${apiConnected ? '' : 'api-offline'}`}><span className="status-light" /> {apiConnected ? 'API connected' : 'API not checked'}</div>
             <ThemeButton theme={theme} onToggle={() => setTheme(theme === 'dark' ? 'light' : 'dark')} />
-            <button className="icon-button notification-button" aria-label="Notifications" onClick={() => setShowNotifications((show) => !show)}>
+            {canReadWorkspace && <button className="icon-button notification-button" aria-label="Notifications" onClick={() => setShowNotifications((show) => !show)}>
               <Bell size={19} />{unreadCount > 0 && <span className="notification-badge">{unreadCount > 9 ? '9+' : unreadCount}</span>}
-            </button>
+            </button>}
           </div>
         </header>
 
@@ -549,38 +584,41 @@ function App() {
           <div className="page-heading">
             <div>
               <p className="eyebrow">{formatDate(renderTime.toISOString(), { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
-              <h1>{page === 'overview' ? `Good ${renderTime.getHours() < 12 ? 'morning' : renderTime.getHours() < 17 ? 'afternoon' : 'evening'}, ${user.full_name.split(' ')[0]}` : pageTitle}<span className="heading-period">.</span></h1>
-              <p className="heading-subtitle">{page === 'overview' ? 'Here’s what’s happening with your sales today.' : page === 'leads' ? 'Keep every conversation moving forward.' : page === 'tasks' ? 'A thoughtful follow-up can make all the difference.' : page === 'activity' ? 'A shared view of what’s changing across your team.' : page === 'team' ? 'Manage team access and account setup.' : 'Your account details and sign-in security.'}</p>
+              <h1>{activePage === 'overview' ? `Good ${renderTime.getHours() < 12 ? 'morning' : renderTime.getHours() < 17 ? 'afternoon' : 'evening'}, ${user.full_name.split(' ')[0]}` : pageTitle}<span className="heading-period">.</span></h1>
+              <p className="heading-subtitle">{activePage === 'overview' ? 'Here’s what’s happening with your sales today.' : activePage === 'leads' ? 'Keep every conversation moving forward.' : activePage === 'tasks' ? 'A thoughtful follow-up can make all the difference.' : activePage === 'activity' ? 'A shared view of what’s changing across your team.' : activePage === 'team' ? 'Manage team access and account setup.' : 'Your account details and sign-in security.'}</p>
             </div>
             <div className="heading-actions">
               <button className="button button-secondary refresh-button" onClick={() => void refresh()} disabled={loading}><RefreshCw size={16} className={loading ? 'spinning' : ''} /><span>Refresh</span></button>
-              {(page === 'overview' || page === 'leads') && <button className="button button-primary" onClick={() => setShowCreateLead(true)}><Plus size={17} /> Add lead</button>}
+              {canReadWorkspace && canWriteWorkspace && (activePage === 'overview' || activePage === 'leads') && <button className="button button-primary" onClick={() => setShowCreateLead(true)}><Plus size={17} /> Add lead</button>}
             </div>
           </div>
 
-          {loading && !dashboard ? <LoadingState /> : (
+          {loading && !dashboard && canReadWorkspace ? <LoadingState /> : (
             <>
-              {page === 'overview' && (
-                <OverviewPage dashboard={dashboard} leads={leads} events={auditEvents} now={renderTime.getTime()} onOpenLead={setSelectedLead} onOpenLeadById={openLeadById} onOpenTasks={() => setPage('tasks')} onSeeAllActivity={() => setPage('activity')} onCompleteTask={completeTask} onOpenLeads={() => setPage('leads')} onOpenEvent={(event) => void openAuditEvent(event)} />
+              {!canReadWorkspace && activePage !== 'team' && activePage !== 'profile' && (
+                <EmptyState title="Workspace access is disabled" description="Your current role does not have permission to read CRM records." />
               )}
-              {page === 'leads' && (
-                <LeadsPage leads={leads} query={query} setQuery={setQuery} searchRef={leadSearchRef} statusFilter={statusFilter} setStatusFilter={setStatusFilter} onOpenLead={setSelectedLead} onUpdateStatus={updateLeadStatus} onAddLead={() => setShowCreateLead(true)} onImportFile={importCsv} importErrors={importErrors} onDismissImportErrors={() => dispatch({ type: 'import-errors-cleared' })} canImport={user.role !== 'agent'} loading={loading} />
+              {canReadWorkspace && activePage === 'overview' && (
+                <OverviewPage dashboard={dashboard} leads={leads} events={auditEvents} now={renderTime.getTime()} onOpenLead={setSelectedLead} onOpenLeadById={openLeadById} onOpenTasks={() => setPage('tasks')} onSeeAllActivity={() => setPage('activity')} onCompleteTask={completeTask} onOpenLeads={() => setPage('leads')} onOpenEvent={(event) => void openAuditEvent(event)} canWrite={canWriteWorkspace} />
               )}
-              {page === 'tasks' && (
-                <TasksPage tasks={visibleTasks} filter={taskFilter} setFilter={setTaskFilter} now={renderTime.getTime()} onComplete={completeTask} onOpenLead={openLeadById} />
+              {canReadWorkspace && activePage === 'leads' && (
+                <LeadsPage leads={leads} query={query} setQuery={setQuery} searchRef={leadSearchRef} statusFilter={statusFilter} setStatusFilter={setStatusFilter} onOpenLead={setSelectedLead} onUpdateStatus={updateLeadStatus} onAddLead={() => setShowCreateLead(true)} onImportFile={importCsv} importErrors={importErrors} onDismissImportErrors={() => dispatch({ type: 'import-errors-cleared' })} canImport={canWriteWorkspace && user.role !== 'agent'} canWrite={canWriteWorkspace} loading={loading} />
               )}
-              {page === 'activity' && <ActivityPage events={auditEvents} unreadCount={unreadCount} onMarkRead={markRead} onOpenEvent={(event) => void openAuditEvent(event)} />}
-              {page === 'team' && user.role !== 'agent' && <TeamPage currentUser={user} users={teamUsers} temporaryPassword={temporaryPassword} onClearTemporaryPassword={() => setTemporaryPassword(null)} onCreate={createTeamUser} onUpdate={updateTeamUser} onResetPassword={resetTeamUserPassword} onError={setError} onConfirmAction={setConfirmation} onResetAll={resetAllUserPasswords} />}
-              {page === 'profile' && <ProfilePage user={user} onChangePassword={changeOwnPassword} onSaveProfile={updateOwnProfile} onConfirmAction={setConfirmation} />}
+              {canReadWorkspace && activePage === 'tasks' && (
+                <TasksPage tasks={visibleTasks} filter={taskFilter} setFilter={setTaskFilter} now={renderTime.getTime()} onComplete={completeTask} onOpenLead={openLeadById} canWrite={canWriteWorkspace} />
+              )}
+              {canReadWorkspace && activePage === 'activity' && <ActivityPage events={auditEvents} unreadCount={unreadCount} onMarkRead={markRead} onOpenEvent={(event) => void openAuditEvent(event)} />}
+              {activePage === 'team' && canManageTeam && <TeamPage currentUser={user} users={teamUsers} temporaryPassword={temporaryPassword} onClearTemporaryPassword={() => setTemporaryPassword(null)} onCreate={createTeamUser} onUpdate={updateTeamUser} onResetPassword={resetTeamUserPassword} onError={setError} onConfirmAction={setConfirmation} onResetAll={resetAllUserPasswords} />}
+              {activePage === 'profile' && <ProfilePage user={user} onChangePassword={changeOwnPassword} onSaveProfile={updateOwnProfile} onConfirmAction={setConfirmation} />}
             </>
           )}
         </div>
       </main>
 
-      {showNotifications && <NotificationPanel events={auditEvents.slice(0, 5)} unreadCount={unreadCount} onClose={() => setShowNotifications(false)} onOpenEvent={(event) => void openAuditEvent(event)} onOpenActivity={() => { setPage('activity'); setShowNotifications(false) }} />}
+      {showNotifications && canReadWorkspace && <NotificationPanel events={auditEvents.slice(0, 5)} unreadCount={unreadCount} onClose={() => setShowNotifications(false)} onOpenEvent={(event) => void openAuditEvent(event)} onOpenActivity={() => { setPage('activity'); setShowNotifications(false) }} />}
       {confirmation && <ConfirmationDialog request={confirmation} onCancel={() => setConfirmation(null)} onConfirmed={() => setConfirmation(null)} />}
-      {selectedLead && <LeadDrawer lead={selectedLead} token={token} onClose={() => setSelectedLead(null)} onUpdated={(updated) => { setSelectedLead(updated); void refresh() }} onError={setError} />}
-      {showCreateLead && <CreateLeadModal token={token} currentUser={user} onClose={() => setShowCreateLead(false)} onCreated={async (lead) => { setShowCreateLead(false); setNotice(`Added ${lead.full_name} to your leads.`); setPage('leads'); await refresh(); setSelectedLead(lead) }} onError={setError} />}
+      {selectedLead && canReadWorkspace && <LeadDrawer lead={selectedLead} token={token} onClose={() => setSelectedLead(null)} onUpdated={(updated) => { setSelectedLead(updated); void refresh() }} onError={setError} canWrite={canWriteWorkspace} />}
+      {showCreateLead && canWriteWorkspace && <CreateLeadModal token={token} currentUser={user} onClose={() => setShowCreateLead(false)} onCreated={async (lead) => { setShowCreateLead(false); setNotice(`Added ${lead.full_name} to your leads.`); setPage('leads'); await refresh(); setSelectedLead(lead) }} onError={setError} />}
     </div>
   )
 }
@@ -712,13 +750,14 @@ function ConfirmationDialog({ request, onCancel, onConfirmed }: { request: Confi
   </div>
 }
 
-function OverviewPage({ dashboard, leads, events, now, onOpenLead, onOpenLeadById, onOpenTasks, onSeeAllActivity, onCompleteTask, onOpenLeads, onOpenEvent }: {
+function OverviewPage({ dashboard, leads, events, now, onOpenLead, onOpenLeadById, onOpenTasks, onSeeAllActivity, onCompleteTask, onOpenLeads, onOpenEvent, canWrite }: {
   dashboard: Dashboard | null; leads: Lead[]; events: AuditEvent[]
   now: number
   onOpenLead: (lead: Lead) => void; onOpenLeadById: (leadId: string) => void
   onOpenTasks: () => void; onSeeAllActivity: () => void
   onCompleteTask: (task: Pick<Task, 'id'>) => void; onOpenLeads: () => void
   onOpenEvent: (event: AuditEvent) => void
+  canWrite: boolean
 }) {
   const pipelineData = stages.map((stage) => ({ ...stage, count: dashboard?.pipeline_counts[stage.value] ?? 0 }))
   const pipelineTotal = pipelineData.reduce((total, item) => total + item.count, 0)
@@ -783,8 +822,9 @@ function OverviewPage({ dashboard, leads, events, now, onOpenLead, onOpenLeadByI
         {dueTasks.length ? <div className="followup-list">{dueTasks.map((task) => {
           const lead = leads.find((item) => item.id === task.lead_id)
           return <div className="followup-item" key={task.id}>
-            <button className="task-check" title="Mark complete" onClick={() => onCompleteTask(task)}><Check size={13} /></button>
+            {canWrite && <button className="task-check" title="Mark complete" onClick={() => onCompleteTask(task)}><Check size={13} /></button>}
               <button className="followup-copy" onClick={() => lead ? onOpenLead(lead) : onOpenLeadById(task.lead_id)}><strong>{task.title}</strong><span>{task.lead_name}</span></button>
+            <span className="task-assignee"><span className="avatar avatar-xs avatar-user">{initials(task.assigned_to_name)}</span>{task.assigned_to_name}</span>
             <span className={`task-time ${taskIsOverdue(task.due_at, now) ? 'task-time-overdue' : ''}`}><Clock3 size={12} />{relativeDate(task.due_at)}</span>
           </div>
         })}</div> : <EmptyState title="You’re all caught up" description="No overdue or due-today follow-ups to show." />}
@@ -809,28 +849,29 @@ function StatCard({ label, value, icon, hint, tone, trend }: { label: string; va
   return <div className="stat-card"><div className={`stat-icon stat-${tone}`}>{icon}</div><span className="stat-label">{label}</span><strong className="stat-value">{value}</strong><span className="stat-hint">{hint}</span><span className={`stat-trend trend-${tone}`}>{tone === 'rose' ? <ArrowDownRight size={13} /> : <ArrowUpRight size={13} />}{trend}</span></div>
 }
 
-function LeadsPage({ leads, query, setQuery, searchRef, statusFilter, setStatusFilter, onOpenLead, onUpdateStatus, onAddLead, onImportFile, importErrors, onDismissImportErrors, canImport, loading }: {
+function LeadsPage({ leads, query, setQuery, searchRef, statusFilter, setStatusFilter, onOpenLead, onUpdateStatus, onAddLead, onImportFile, importErrors, onDismissImportErrors, canImport, canWrite, loading }: {
   leads: Lead[]; query: string; setQuery: (value: string) => void; statusFilter: string
   searchRef: React.RefObject<HTMLInputElement | null>
   setStatusFilter: (value: string) => void; onOpenLead: (lead: Lead) => void
   onUpdateStatus: (lead: Lead, status: LeadStatus) => void; onAddLead: () => void
   onImportFile: (file: File) => void; importErrors: CSVImportResult['errors']
-  onDismissImportErrors: () => void; canImport: boolean; loading: boolean
+  onDismissImportErrors: () => void; canImport: boolean; canWrite: boolean; loading: boolean
 }) {
   return <section className="panel full-panel leads-page-panel">
     <div className="list-toolbar"><div className="search-box"><Search size={17} /><input ref={searchRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search leads, locations…" aria-label="Search leads" /><kbd className="search-shortcut">/</kbd>{query && <button className="icon-button clear-search" aria-label="Clear search" onClick={() => setQuery('')}><X size={14} /></button>}</div><label className="select-wrap"><SlidersHorizontal size={15} /><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} aria-label="Filter by stage"><option value="">All stages</option>{stages.map((stage) => <option key={stage.value} value={stage.value}>{stage.label}</option>)}</select><ChevronDown size={14} /></label><span className="result-count">{leads.length} leads</span>{canImport && <label className="button button-secondary import-button"><Upload size={15} /> Import CSV<input type="file" accept=".csv,text/csv" onChange={(event) => { const file = event.target.files?.[0]; if (file) onImportFile(file); event.currentTarget.value = '' }} /></label>}</div>
     {importErrors.length > 0 && <div className="csv-errors"><div><strong>Some rows weren’t imported</strong><span>Review the row numbers and fix the source CSV before retrying.</span></div><button className="icon-button" aria-label="Dismiss import errors" onClick={onDismissImportErrors}><X size={16} /></button><ul>{importErrors.slice(0, 8).map((item) => <li key={`${item.row}-${item.message}`}><strong>Row {item.row}</strong>{item.message}</li>)}</ul>{importErrors.length > 8 && <small>And {importErrors.length - 8} more row errors.</small>}</div>}
-    <div className="table-scroll"><table className="data-table leads-table"><thead><tr><th>Lead</th><th>Contact</th><th>Requirement</th><th>Source</th><th>Stage</th><th>Added</th><th aria-label="Open" /></tr></thead><tbody>{leads.map((lead) => <tr key={lead.id}><td><button className="lead-cell lead-cell-button" onClick={() => onOpenLead(lead)}><div className={`avatar avatar-${avatarColor(lead.full_name)}`}>{initials(lead.full_name)}</div><span><strong>{lead.full_name}</strong><small>{lead.preferred_location || 'Location not set'}</small></span></button></td><td><span>{lead.email || '—'}</span><small className="table-subline">{lead.phone || 'No phone'}</small></td><td><strong className="requirement-main">{lead.bhk ? `${lead.bhk} BHK` : 'Home search'}</strong><small className="table-subline">{budgetRange(lead)}</small></td><td><span className="source-label">{sourceLabels[lead.source]}</span></td><td><select className={`status-select status-${stageFor(lead.status).tone}`} aria-label={`Change ${lead.full_name} stage`} value={lead.status} onChange={(event) => void onUpdateStatus(lead, event.target.value as LeadStatus)}>{stages.map((stage) => <option key={stage.value} value={stage.value}>{stage.label}</option>)}</select></td><td className="muted-cell">{formatDate(lead.created_at)}</td><td><button className="icon-button row-open" aria-label={`Open ${lead.full_name}`} onClick={() => onOpenLead(lead)}><ChevronRight size={17} /></button></td></tr>)}</tbody></table></div>
-    {!leads.length && !loading && <EmptyState title={query || statusFilter ? 'No matching leads' : 'No leads yet'} description={query || statusFilter ? 'Try another search or clear the stage filter.' : 'Your next great client relationship starts here.'} action={!query && !statusFilter ? <button className="button button-primary" onClick={onAddLead}><Plus size={16} /> Add your first lead</button> : undefined} />}
+    <div className="table-scroll"><table className="data-table leads-table"><thead><tr><th>Lead</th><th>Contact</th><th>Requirement</th><th>Source</th><th>Stage</th><th>Added</th><th aria-label="Open" /></tr></thead><tbody>{leads.map((lead) => <tr key={lead.id}><td><button className="lead-cell lead-cell-button" onClick={() => onOpenLead(lead)}><div className={`avatar avatar-${avatarColor(lead.full_name)}`}>{initials(lead.full_name)}</div><span><strong>{lead.full_name}</strong><small>{lead.preferred_location || 'Location not set'}</small></span></button></td><td><span>{lead.email || '—'}</span><small className="table-subline">{lead.phone || 'No phone'}</small></td><td><strong className="requirement-main">{lead.bhk ? `${lead.bhk} BHK` : 'Home search'}</strong><small className="table-subline">{budgetRange(lead)}</small></td><td><span className="source-label">{sourceLabels[lead.source]}</span></td><td><select className={`status-select status-${stageFor(lead.status).tone}`} aria-label={`Change ${lead.full_name} stage`} value={lead.status} disabled={!canWrite} onChange={(event) => void onUpdateStatus(lead, event.target.value as LeadStatus)}>{stages.map((stage) => <option key={stage.value} value={stage.value}>{stage.label}</option>)}</select></td><td className="muted-cell">{formatDate(lead.created_at)}</td><td><button className="icon-button row-open" aria-label={`Open ${lead.full_name}`} onClick={() => onOpenLead(lead)}><ChevronRight size={17} /></button></td></tr>)}</tbody></table></div>
+    {!leads.length && !loading && <EmptyState title={query || statusFilter ? 'No matching leads' : 'No leads yet'} description={query || statusFilter ? 'Try another search or clear the stage filter.' : 'Your next great client relationship starts here.'} action={!query && !statusFilter && canWrite ? <button className="button button-primary" onClick={onAddLead}><Plus size={16} /> Add your first lead</button> : undefined} />}
     {loading && <div className="inline-loading"><span className="spinner" /> Updating your leads…</div>}
     <div className="table-footnote"><span>Showing the latest {leads.length} leads</span><span>Visibility is managed by your team role</span></div>
   </section>
 }
 
-function TasksPage({ tasks, filter, setFilter, now, onComplete, onOpenLead }: {
+function TasksPage({ tasks, filter, setFilter, now, onComplete, onOpenLead, canWrite }: {
   tasks: (Task | Dashboard['due_today'][number])[]; filter: 'all' | 'today' | 'overdue' | 'completed'
   setFilter: (filter: 'all' | 'today' | 'overdue' | 'completed') => void; now: number
   onComplete: (task: Pick<Task, 'id'>) => void; onOpenLead: (leadId: string) => void
+  canWrite: boolean
 }) {
   const filters = [{ id: 'all', label: 'All open' }, { id: 'today', label: 'Due today' }, { id: 'overdue', label: 'Overdue' }, { id: 'completed', label: 'Completed' }] as const
   return <section className="panel full-panel task-page-panel">
@@ -838,9 +879,9 @@ function TasksPage({ tasks, filter, setFilter, now, onComplete, onOpenLead }: {
     {tasks.length ? <div className="task-list">{tasks.map((task) => {
       const completed = task.status === 'completed'
       return <div className={`task-row ${completed ? 'task-row-completed' : ''}`} key={task.id}>
-        {completed ? <span className="task-completed-mark"><Check size={14} /></span> : <button className="task-check large-check" title="Mark complete" aria-label={`Mark ${task.title} complete`} onClick={() => onComplete(task)}><Check size={14} /></button>}
+        {completed ? <span className="task-completed-mark"><Check size={14} /></span> : canWrite ? <button className="task-check large-check" title="Mark complete" aria-label={`Mark ${task.title} complete`} onClick={() => onComplete(task)}><Check size={14} /></button> : <span className="task-completed-mark" aria-hidden="true" />}
         <div className="task-row-main"><strong>{task.title}</strong><button className="task-lead-link" onClick={() => onOpenLead(task.lead_id)}>{'lead_name' in task ? task.lead_name : 'Open lead'}<ArrowUpRight size={12} /></button>{'description' in task && task.description && <span className="task-description">{task.description}</span>}</div>
-        <span className="task-assignee"><span className="avatar avatar-xs avatar-user">ME</span>{completed ? 'Completed' : 'Assigned to you'}</span>
+        <span className="task-assignee"><span className="avatar avatar-xs avatar-user">{initials(task.assigned_to_name)}</span>{task.assigned_to_name}</span>
         <span className={`task-due ${!completed && taskIsOverdue(task.due_at, now) ? 'task-time-overdue' : ''}`}><CalendarDays size={15} />{completed && 'completed_at' in task && task.completed_at ? `Completed ${relativeDate(task.completed_at)}` : relativeDate(task.due_at)}</span>
       </div>
     })}</div> : <EmptyState title={filter === 'overdue' ? 'Nothing overdue' : filter === 'today' ? 'Nothing due today' : filter === 'completed' ? 'No completed follow-ups yet' : 'No open follow-ups'} description={filter === 'all' ? 'Create a follow-up from any lead to keep the conversation moving.' : filter === 'completed' ? 'Finished follow-ups will stay here for reference.' : 'You’re all caught up. Keep it that way.'} />}
@@ -989,6 +1030,9 @@ function ProfilePage({ user, onChangePassword, onSaveProfile, onConfirmAction }:
       <span className="role-pill">{user.role}</span>
       <dl className="profile-details">
         <div><dt>Email</dt><dd>{user.email}</dd></div>
+        <div><dt>Role</dt><dd>{user.role}</dd></div>
+        {user.is_superuser && <div><dt>Access level</dt><dd>Development superuser (team-scoped)</dd></div>}
+        <div><dt>Phone</dt><dd>{user.phone || 'Not added'}</dd></div>
         <div><dt>Account status</dt><dd>{user.is_active ? 'Active' : 'Inactive'}</dd></div>
         <div><dt>Team ID</dt><dd>{user.team_id}</dd></div>
         <div><dt>Password setup</dt><dd>{user.must_change_password ? 'Change required' : 'Up to date'}</dd></div>
@@ -1027,15 +1071,29 @@ function TeamPage({ currentUser, users, temporaryPassword, onClearTemporaryPassw
   const [fullName, setFullName] = useState('')
   const [email, setEmail] = useState('')
   const [role, setRole] = useState<UserRole>('agent')
+  const [permissions, setPermissions] = useState({
+    can_read: true,
+    can_write: true,
+    can_delete: false,
+    can_manage_users: false,
+  })
   const [saving, setSaving] = useState(false)
+  const ownerAccess = currentUser.role === 'owner' || currentUser.is_superuser
+  const canWriteTeam = ownerAccess || currentUser.role !== 'co_owner' || currentUser.can_write
+  const canDeleteUsers = ownerAccess || currentUser.role !== 'co_owner' || currentUser.can_delete
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     onError('')
-    const newUser = { full_name: fullName, email, role }
+    const newUser: UserCreateRequest = {
+      full_name: fullName,
+      email,
+      role,
+      ...(role === 'co_owner' ? permissions : {}),
+    }
     onConfirmAction({
       title: 'Create this team account?',
-      message: `Create ${newUser.full_name} (${newUser.email}) as ${newUser.role}? A temporary password will be generated and shown once; share it privately, and the user will have to change it at first sign-in.`,
+      message: `Create ${newUser.full_name} (${newUser.email}) as ${newUser.role.replace('_', ' ')}? A temporary password will be generated and shown once; share it privately, and the user will have to change it at first sign-in.`,
       confirmLabel: 'Create account',
       onConfirm: async () => {
         setSaving(true)
@@ -1044,6 +1102,7 @@ function TeamPage({ currentUser, users, temporaryPassword, onClearTemporaryPassw
           setFullName('')
           setEmail('')
           setRole('agent')
+          setPermissions({ can_read: true, can_write: true, can_delete: false, can_manage_users: false })
           setShowForm(false)
         } finally {
           setSaving(false)
@@ -1054,43 +1113,74 @@ function TeamPage({ currentUser, users, temporaryPassword, onClearTemporaryPassw
 
   return <section className="panel full-panel team-page-panel">
     <div className="panel-header team-header">
-      <div><p className="eyebrow">TEAM ACCESS</p><h2>People in your workspace</h2><p className="panel-subtitle">{currentUser.role === 'owner' ? 'Create accounts, adjust access, and help teammates get back in.' : 'Manage agent access and reset passwords for your team.'}</p></div>
+      <div><p className="eyebrow">TEAM ACCESS</p><h2>People in your workspace</h2><p className="panel-subtitle">{ownerAccess ? 'Create accounts, adjust access, and help teammates get back in.' : 'Manage agent access and reset passwords for your team.'}</p></div>
       <div className="team-header-actions">
-        {currentUser.role === 'owner' && <button className="button button-danger" onClick={() => onConfirmAction({
+        {ownerAccess && <button className="button button-danger" onClick={() => onConfirmAction({
           title: 'Reset every account password?',
           message: 'This resets every account in the team, including inactive accounts and your own. Everyone will be signed out and must change their new temporary password at next sign-in. A CSV containing all temporary passwords will download once; keep it private and share each user’s credentials securely.',
           confirmLabel: 'Reset all & download CSV',
           onConfirm: onResetAll,
         })}>Reset all passwords</button>}
-        <button className="button button-primary" onClick={() => setShowForm((show) => !show)}><UserPlus size={16} /> {showForm ? 'Close form' : 'New user'}</button>
+        {canWriteTeam && <button className="button button-primary" onClick={() => setShowForm((show) => !show)}><UserPlus size={16} /> {showForm ? 'Close form' : 'New user'}</button>}
       </div>
     </div>
     {temporaryPassword && <div className="temporary-password-card" role="status"><div><strong>Temporary password for {temporaryPassword.email}</strong><p>Share this one-time password securely. The user must change it after signing in.</p><code>{temporaryPassword.password}</code></div><button className="icon-button" aria-label="Dismiss temporary password" onClick={onClearTemporaryPassword}><X size={16} /></button></div>}
-    {showForm && <form className="team-create-form account-form" onSubmit={(event) => void submit(event)}>
+    {showForm && canWriteTeam && <form className="team-create-form account-form" onSubmit={(event) => void submit(event)}>
       <label>Full name<input value={fullName} onChange={(event) => setFullName(event.target.value)} autoComplete="name" maxLength={160} required /></label>
       <label>Email address<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" maxLength={320} required /></label>
-      <label>Role<select value={role} onChange={(event) => setRole(event.target.value as UserRole)} disabled={currentUser.role === 'manager'}><option value="agent">Agent</option>{currentUser.role === 'owner' && <option value="manager">Manager</option>}</select></label>
+      <label>Role<select value={role} onChange={(event) => setRole(event.target.value as UserRole)}><option value="agent">Agent</option>{ownerAccess && <><option value="manager">Manager</option><option value="co_owner">Co-owner</option></>}</select></label>
+      {role === 'co_owner' && ownerAccess && <fieldset className="co-owner-permissions">
+        <legend>Co-owner access</legend>
+        {([
+          ['can_read', 'Read workspace data'],
+          ['can_write', 'Create and edit records'],
+          ['can_delete', 'Delete or deactivate records'],
+          ['can_manage_users', 'Manage agent accounts'],
+        ] as const).map(([field, label]) => <label className="permission-checkbox" key={field}>
+          <input type="checkbox" checked={permissions[field]} onChange={(event) => setPermissions((current) => ({ ...current, [field]: event.target.checked }))} />
+          {label}
+        </label>)}
+      </fieldset>}
       <button className="button button-primary" disabled={saving}>{saving ? 'Creating…' : 'Create account'}</button>
     </form>}
     <div className="team-member-list">
       {users.map((member) => <article className="team-member-row" key={member.id}>
         <div className="avatar avatar-user">{initials(member.full_name)}</div>
         <div className="team-member-identity"><strong>{member.full_name}</strong><span>{member.email}</span></div>
-        {currentUser.role === 'owner' && member.id !== currentUser.id
+        {ownerAccess && member.id !== currentUser.id && member.role !== 'owner'
           ? <label className="member-role-control"><span>Role</span><select aria-label={`Role for ${member.full_name}`} value={member.role} onChange={(event) => {
             const nextRole = event.target.value as UserRole
             if (nextRole === member.role) return
             onConfirmAction({
               title: `Change ${member.full_name}'s role?`,
-              message: `This changes their workspace permissions from ${member.role} to ${nextRole} and revokes their current sessions.`,
+              message: `This changes their workspace permissions from ${member.role.replace('_', ' ')} to ${nextRole.replace('_', ' ')} and revokes their current sessions.`,
               confirmLabel: 'Change role',
               onConfirm: () => onUpdate(member.id, { role: nextRole }),
             })
-          }}><option value="manager">Manager</option><option value="agent">Agent</option></select></label>
+          }}><option value="manager">Manager</option><option value="co_owner">Co-owner</option><option value="agent">Agent</option></select></label>
           : <span className="role-pill">{member.role}</span>}
+        {ownerAccess && member.role === 'co_owner' && member.id !== currentUser.id && <div className="member-permissions">
+          {([
+            ['can_read', 'Read'],
+            ['can_write', 'Write'],
+            ['can_delete', 'Delete or deactivate'],
+            ['can_manage_users', 'Manage users'],
+          ] as const).map(([field, label]) => <label className="permission-checkbox" key={field}>
+            <input type="checkbox" checked={member[field]} aria-label={`${label} access for ${member.full_name}`} onChange={(event) => {
+              const enabled = event.target.checked
+              onConfirmAction({
+                title: `Change ${label.toLowerCase()} access for ${member.full_name}?`,
+                message: `${enabled ? 'Enable' : 'Disable'} ${label.toLowerCase()} access for this co-owner?`,
+                confirmLabel: 'Update access',
+                onConfirm: () => onUpdate(member.id, { [field]: enabled }),
+              })
+            }} />
+            {label}
+          </label>)}
+        </div>}
         <span className={`member-status ${member.is_active ? 'member-status-active' : ''}`}>{member.is_active ? 'Active' : 'Inactive'}</span>
-        {member.id !== currentUser.id && <div className="member-actions">
-          <button className="button button-secondary" onClick={() => member.is_active
+        {member.id !== currentUser.id && canWriteTeam && <div className="member-actions">
+          <button className="button button-secondary" disabled={member.is_active && !canDeleteUsers} onClick={() => member.is_active
             ? onConfirmAction({
               title: `Deactivate ${member.full_name}?`,
               message: 'They will lose access to this workspace until an owner or manager reactivates their account. Their existing CRM records will remain.',
@@ -1113,11 +1203,11 @@ function TeamPage({ currentUser, users, temporaryPassword, onClearTemporaryPassw
       </article>)}
       {!users.length && <EmptyState title="No team members found" description="New accounts will appear here after they are created." />}
     </div>
-    <p className="team-access-note">Access controls are enforced by the API. Managers can only manage agents; owners can adjust roles.</p>
+    <p className="team-access-note">Access controls are enforced by the API. Managers and user-enabled co-owners manage agents; only owners can create managers or co-owners.</p>
   </section>
 }
 
-function LeadDrawer({ lead: initialLead, token, onClose, onUpdated, onError }: { lead: Lead; token: string; onClose: () => void; onUpdated: (lead: Lead) => void; onError: (message: string) => void }) {
+function LeadDrawer({ lead: initialLead, token, onClose, onUpdated, onError, canWrite }: { lead: Lead; token: string; onClose: () => void; onUpdated: (lead: Lead) => void; onError: (message: string) => void; canWrite: boolean }) {
   const [lead, setLead] = useState(initialLead)
   const [activities, setActivities] = useState<Activity[]>([])
   const [activityText, setActivityText] = useState('')
@@ -1180,10 +1270,10 @@ function LeadDrawer({ lead: initialLead, token, onClose, onUpdated, onError }: {
   }
 
   return <><button className="drawer-backdrop" aria-label="Close lead details" onClick={onClose} /><aside className="lead-drawer"><div className="drawer-topbar"><span className="eyebrow">LEAD PROFILE</span><button className="icon-button" aria-label="Close lead details" onClick={onClose}><X size={19} /></button></div><div className="drawer-lead-head"><div className={`avatar avatar-large avatar-${avatarColor(lead.full_name)}`}>{initials(lead.full_name)}</div><div><h2>{lead.full_name}</h2><span className="drawer-subtitle">Added {formatDate(lead.created_at, { day: 'numeric', month: 'long', year: 'numeric' })}</span></div></div>
-    <div className="drawer-stage"><label htmlFor="drawer-status">CURRENT STAGE</label><select id="drawer-status" className={`status-select status-${stageFor(lead.status).tone}`} value={lead.status} onChange={(event) => void changeStage(event.target.value as LeadStatus)}>{stages.map((stage) => <option key={stage.value} value={stage.value}>{stage.label}</option>)}</select></div>
-    <div className="drawer-actions"><button className="button button-secondary" onClick={() => setActiveForm(activeForm === 'activity' ? null : 'activity')}><ActivityIcon size={15} /> Log activity</button><button className="button button-secondary" onClick={() => setActiveForm(activeForm === 'task' ? null : 'task')}><CalendarDays size={15} /> Add follow-up</button></div>
-    {activeForm === 'activity' && <form className="drawer-form" onSubmit={(event) => void submitActivity(event)}><div className="drawer-form-heading"><strong>Log an interaction</strong><button type="button" className="icon-button" aria-label="Close form" onClick={() => setActiveForm(null)}><X size={15} /></button></div><select value={activityType} onChange={(event) => setActivityType(event.target.value as Activity['type'])}><option value="call">Call</option><option value="note">Note</option><option value="site_visit">Site visit</option><option value="email">Email</option><option value="whatsapp">WhatsApp</option></select><textarea value={activityText} onChange={(event) => setActivityText(event.target.value)} placeholder="What happened? Add a useful note…" rows={3} required /><button className="button button-primary" disabled={saving}>{saving ? 'Saving…' : 'Save activity'}</button></form>}
-    {activeForm === 'task' && <form className="drawer-form" onSubmit={(event) => void submitTask(event)}><div className="drawer-form-heading"><strong>Plan a follow-up</strong><button type="button" className="icon-button" aria-label="Close form" onClick={() => setActiveForm(null)}><X size={15} /></button></div><input value={taskTitle} onChange={(event) => setTaskTitle(event.target.value)} placeholder="e.g. Call to confirm site visit" maxLength={200} required /><input type="datetime-local" value={taskDate} onChange={(event) => setTaskDate(event.target.value)} required /><button className="button button-primary" disabled={saving}>{saving ? 'Saving…' : 'Create follow-up'}</button></form>}
+    <div className="drawer-stage"><label htmlFor="drawer-status">CURRENT STAGE</label><select id="drawer-status" className={`status-select status-${stageFor(lead.status).tone}`} value={lead.status} disabled={!canWrite} onChange={(event) => void changeStage(event.target.value as LeadStatus)}>{stages.map((stage) => <option key={stage.value} value={stage.value}>{stage.label}</option>)}</select></div>
+    {canWrite && <div className="drawer-actions"><button className="button button-secondary" onClick={() => setActiveForm(activeForm === 'activity' ? null : 'activity')}><ActivityIcon size={15} /> Log activity</button><button className="button button-secondary" onClick={() => setActiveForm(activeForm === 'task' ? null : 'task')}><CalendarDays size={15} /> Add follow-up</button></div>}
+    {canWrite && activeForm === 'activity' && <form className="drawer-form" onSubmit={(event) => void submitActivity(event)}><div className="drawer-form-heading"><strong>Log an interaction</strong><button type="button" className="icon-button" aria-label="Close form" onClick={() => setActiveForm(null)}><X size={15} /></button></div><select value={activityType} onChange={(event) => setActivityType(event.target.value as Activity['type'])}><option value="call">Call</option><option value="note">Note</option><option value="site_visit">Site visit</option><option value="email">Email</option><option value="whatsapp">WhatsApp</option></select><textarea value={activityText} onChange={(event) => setActivityText(event.target.value)} placeholder="What happened? Add a useful note…" rows={3} required /><button className="button button-primary" disabled={saving}>{saving ? 'Saving…' : 'Save activity'}</button></form>}
+    {canWrite && activeForm === 'task' && <form className="drawer-form" onSubmit={(event) => void submitTask(event)}><div className="drawer-form-heading"><strong>Plan a follow-up</strong><button type="button" className="icon-button" aria-label="Close form" onClick={() => setActiveForm(null)}><X size={15} /></button></div><input value={taskTitle} onChange={(event) => setTaskTitle(event.target.value)} placeholder="e.g. Call to confirm site visit" maxLength={200} required /><input type="datetime-local" value={taskDate} onChange={(event) => setTaskDate(event.target.value)} required /><button className="button button-primary" disabled={saving}>{saving ? 'Saving…' : 'Create follow-up'}</button></form>}
     <div className="detail-section"><p className="eyebrow">WHAT THEY’RE LOOKING FOR</p><div className="detail-cards"><div className="detail-card"><span>Budget</span><strong>{budgetRange(lead)}</strong></div><div className="detail-card"><span>Configuration</span><strong>{lead.bhk ? `${lead.bhk} BHK` : 'Not specified'}</strong></div></div><div className="detail-location"><MapPin size={16} /><span>{lead.preferred_location || 'Preferred location not specified'}</span></div></div>
     <div className="detail-section contact-section"><p className="eyebrow">CONTACT DETAILS</p>{lead.email && <a href={`mailto:${lead.email}`}><span className="contact-icon">@</span>{lead.email}<ArrowUpRight size={13} /></a>}{lead.phone && <a href={`tel:${lead.phone}`}><span className="contact-icon">#</span>{lead.phone}<ArrowUpRight size={13} /></a>}{!lead.email && !lead.phone && <span className="empty-contact">No contact details added.</span>}<div className="contact-source">Source <strong>{sourceLabels[lead.source]}</strong></div></div>
     <AICopilotPreview lead={lead} />

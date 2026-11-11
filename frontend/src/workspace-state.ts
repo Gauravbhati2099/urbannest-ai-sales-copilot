@@ -16,7 +16,7 @@ export interface WorkspaceState {
 
 export type WorkspaceAction =
   | { type: 'refresh-started' }
-  | { type: 'refresh-succeeded'; dashboard: Dashboard; leads: Lead[]; tasks: Task[]; completedTasks: Task[]; teamUsers: User[]; events: AuditEvent[]; unreadCount: number }
+  | { type: 'refresh-succeeded'; dashboard: Dashboard | null; leads: Lead[]; tasks: Task[]; completedTasks: Task[]; teamUsers: User[]; events: AuditEvent[]; unreadCount: number }
   | { type: 'refresh-failed'; error: string }
   | { type: 'request-failed'; error: string }
   | { type: 'request-succeeded' }

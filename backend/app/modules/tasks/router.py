@@ -8,9 +8,13 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import and_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
-from app.core.dependencies import CurrentUser, DatabaseSession
+from app.core.dependencies import (
+    CurrentUser,
+    DatabaseSession,
+    is_team_record_manager,
+)
 from app.db.models import (
     Activity,
     ActivityType,
@@ -26,7 +30,6 @@ from app.modules.tasks.schemas import TaskCreate, TaskRead, TaskUpdate
 from app.modules.audit.service import record_audit_event
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
-MANAGER_ROLES = {UserRole.OWNER, UserRole.MANAGER}
 
 
 def accessible_task_statement(user: User):
@@ -62,7 +65,9 @@ def list_tasks(
     status_filter: Annotated[TaskStatus | None, Query(alias="status")] = None,
 ) -> list[Task]:
     """List visible tasks; defaults to open tasks and can filter by due window."""
-    statement = accessible_task_statement(current_user)
+    statement = accessible_task_statement(current_user).options(
+        joinedload(Task.assignee)
+    )
     statement = statement.where(
         Task.status == (status_filter or TaskStatus.OPEN)
     )
@@ -151,7 +156,7 @@ def update_task(
     """Update a task's status; owners and managers can also change its assignee."""
     task = get_accessible_task(session, current_user, task_id)
     if (
-        current_user.role not in MANAGER_ROLES
+        not is_team_record_manager(current_user)
         and task.assigned_to != current_user.id
     ):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
@@ -161,7 +166,7 @@ def update_task(
         raise HTTPException(status_code=422, detail="Provide at least one field to update")
     previous_assignee = task.assigned_to
     if "assigned_to" in changes:
-        if current_user.role not in MANAGER_ROLES:
+        if not is_team_record_manager(current_user):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
         if changes["assigned_to"] is None:
             raise HTTPException(status_code=422, detail="Tasks must have an assignee")

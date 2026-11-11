@@ -377,10 +377,9 @@ function App() {
       setTemporaryPassword({ email: created.user.email, password: created.temporary_password })
       setNotice(`Created an account for ${created.user.full_name}. Share the temporary password securely.`)
       await refresh()
-      return true
     } catch (requestError) {
       setError(getErrorMessage(requestError))
-      return false
+      throw requestError
     }
   }
 
@@ -394,6 +393,7 @@ function App() {
       await refresh()
     } catch (requestError) {
       setError(getErrorMessage(requestError))
+      throw requestError
     }
   }
 
@@ -405,6 +405,7 @@ function App() {
       await refresh()
     } catch (requestError) {
       setError(getErrorMessage(requestError))
+      throw requestError
     }
   }
 
@@ -569,8 +570,8 @@ function App() {
                 <TasksPage tasks={visibleTasks} filter={taskFilter} setFilter={setTaskFilter} now={renderTime.getTime()} onComplete={completeTask} onOpenLead={openLeadById} />
               )}
               {page === 'activity' && <ActivityPage events={auditEvents} unreadCount={unreadCount} onMarkRead={markRead} onOpenEvent={(event) => void openAuditEvent(event)} />}
-              {page === 'team' && user.role !== 'agent' && <TeamPage currentUser={user} users={teamUsers} temporaryPassword={temporaryPassword} onClearTemporaryPassword={() => setTemporaryPassword(null)} onCreate={createTeamUser} onUpdate={updateTeamUser} onResetPassword={(member) => void resetTeamUserPassword(member)} onError={setError} onConfirmAction={setConfirmation} onResetAll={resetAllUserPasswords} />}
-              {page === 'profile' && <ProfilePage user={user} onChangePassword={changeOwnPassword} onSaveProfile={updateOwnProfile} />}
+              {page === 'team' && user.role !== 'agent' && <TeamPage currentUser={user} users={teamUsers} temporaryPassword={temporaryPassword} onClearTemporaryPassword={() => setTemporaryPassword(null)} onCreate={createTeamUser} onUpdate={updateTeamUser} onResetPassword={resetTeamUserPassword} onError={setError} onConfirmAction={setConfirmation} onResetAll={resetAllUserPasswords} />}
+              {page === 'profile' && <ProfilePage user={user} onChangePassword={changeOwnPassword} onSaveProfile={updateOwnProfile} onConfirmAction={setConfirmation} />}
             </>
           )}
         </div>
@@ -655,28 +656,30 @@ function PasswordScreen({ token, onComplete, onSignOut, theme, onToggleTheme }: 
   const [next, setNext] = useState('')
   const [confirm, setConfirm] = useState('')
   const [error, setError] = useState('')
-  const [submitting, setSubmitting] = useState(false)
   const [showSignOutConfirmation, setShowSignOutConfirmation] = useState(false)
+  const [showPasswordConfirmation, setShowPasswordConfirmation] = useState(false)
 
-  const submit = async (event: FormEvent<HTMLFormElement>) => {
+  const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setError('')
     if (next !== confirm) {
       setError('Your new passwords do not match.')
       return
     }
-    setSubmitting(true)
+    setShowPasswordConfirmation(true)
+  }
+
+  const changePassword = async () => {
     try {
       const response = await api<LoginResponse>('/auth/change-password', token, { method: 'POST', body: JSON.stringify({ current_password: current, new_password: next }) })
       onComplete(response)
     } catch (requestError) {
       setError(getErrorMessage(requestError))
-    } finally {
-      setSubmitting(false)
+      throw requestError
     }
   }
 
-  return <div className="password-page"><div className="password-card"><div className="password-card-head"><span className="brand-mark">U</span><ThemeButton theme={theme} onToggle={onToggleTheme} /></div><span className="auth-overline">ONE QUICK STEP</span><h1>Make it your own<span className="heading-period">.</span></h1><p>Your account has a temporary password. Create a new one to continue.</p><form className="auth-form" onSubmit={(event) => void submit(event)}><label>Temporary password<input type="password" value={current} onChange={(event) => setCurrent(event.target.value)} required /></label><label>New password<input type="password" minLength={12} value={next} onChange={(event) => setNext(event.target.value)} required /><small className="field-hint">Use at least 12 characters.</small></label><label>Confirm new password<input type="password" value={confirm} onChange={(event) => setConfirm(event.target.value)} required /></label>{error && <div className="form-error"><CircleAlert size={16} />{error}</div>}<button className="button button-primary auth-submit" disabled={submitting}>{submitting ? 'Saving…' : 'Save new password'}<ArrowUpRight size={17} /></button></form><button className="text-button signout-link" onClick={() => setShowSignOutConfirmation(true)}>Sign out instead</button></div>{showSignOutConfirmation && <ConfirmationDialog request={{ title: 'Sign out?', message: 'You’ll need to sign in again to continue setting up your account.', confirmLabel: 'Sign out', onConfirm: onSignOut }} onCancel={() => setShowSignOutConfirmation(false)} onConfirmed={() => setShowSignOutConfirmation(false)} />}</div>
+  return <div className="password-page"><div className="password-card"><div className="password-card-head"><span className="brand-mark">U</span><ThemeButton theme={theme} onToggle={onToggleTheme} /></div><span className="auth-overline">ONE QUICK STEP</span><h1>Make it your own<span className="heading-period">.</span></h1><p>Your account has a temporary password. Create a new one to continue.</p><form className="auth-form" onSubmit={submit}><label>Temporary password<input type="password" value={current} onChange={(event) => setCurrent(event.target.value)} required /></label><label>New password<input type="password" minLength={12} value={next} onChange={(event) => setNext(event.target.value)} required /><small className="field-hint">Use at least 12 characters.</small></label><label>Confirm new password<input type="password" value={confirm} onChange={(event) => setConfirm(event.target.value)} required /></label>{error && <div className="form-error"><CircleAlert size={16} />{error}</div>}<button className="button button-primary auth-submit">Review password change<ArrowUpRight size={17} /></button></form><button className="text-button signout-link" onClick={() => setShowSignOutConfirmation(true)}>Sign out instead</button></div>{showSignOutConfirmation && <ConfirmationDialog request={{ title: 'Sign out?', message: 'You’ll need to sign in again to continue setting up your account.', confirmLabel: 'Sign out', onConfirm: onSignOut }} onCancel={() => setShowSignOutConfirmation(false)} onConfirmed={() => setShowSignOutConfirmation(false)} />}{showPasswordConfirmation && <ConfirmationDialog request={{ title: 'Set your new password?', message: 'This replaces your temporary password. Your existing session will be renewed with the new credential.', confirmLabel: 'Save new password', onConfirm: changePassword }} onCancel={() => setShowPasswordConfirmation(false)} onConfirmed={() => setShowPasswordConfirmation(false)} />}</div>
 }
 
 function ConfirmationDialog({ request, onCancel, onConfirmed }: { request: ConfirmationRequest; onCancel: () => void; onConfirmed: () => void }) {
@@ -935,7 +938,7 @@ function NotificationPanel({ events, unreadCount, onClose, onOpenEvent, onOpenAc
   return <><button className="popover-backdrop" aria-label="Close notifications" onClick={onClose} /><section className="notification-panel"><div className="notification-panel-head"><div><strong>Notifications</strong><span>{unreadCount ? `${unreadCount} unread updates` : 'You’re all caught up'}</span></div><button className="icon-button" aria-label="Close notifications" onClick={onClose}><X size={17} /></button></div>{events.length ? <ActivityList events={events.slice(0, 4)} onOpenEvent={onOpenEvent} /> : <EmptyState title="No new updates" description="Your team feed is quiet for now." />}<button className="panel-link" onClick={onOpenActivity}>Open activity feed <ArrowUpRight size={14} /></button></section></>
 }
 
-function ProfilePage({ user, onChangePassword, onSaveProfile }: { user: User; onChangePassword: (currentPassword: string, newPassword: string) => Promise<boolean>; onSaveProfile: (changes: ProfileUpdateRequest) => Promise<boolean> }) {
+function ProfilePage({ user, onChangePassword, onSaveProfile, onConfirmAction }: { user: User; onChangePassword: (currentPassword: string, newPassword: string) => Promise<boolean>; onSaveProfile: (changes: ProfileUpdateRequest) => Promise<boolean>; onConfirmAction: (request: ConfirmationRequest) => void }) {
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -959,13 +962,24 @@ function ProfilePage({ user, onChangePassword, onSaveProfile }: { user: User; on
       setFormError('The new passwords do not match.')
       return
     }
-    setSaving(true)
-    if (await onChangePassword(currentPassword, newPassword)) {
-      setCurrentPassword('')
-      setNewPassword('')
-      setConfirmPassword('')
-    }
-    setSaving(false)
+    onConfirmAction({
+      title: 'Change your password?',
+      message: 'Your current password will stop working. The server will revoke the old token and issue a replacement for this session.',
+      confirmLabel: 'Change password',
+      onConfirm: async () => {
+        setSaving(true)
+        try {
+          if (!await onChangePassword(currentPassword, newPassword)) {
+            throw new Error('Password was not changed. Review the error message and try again.')
+          }
+          setCurrentPassword('')
+          setNewPassword('')
+          setConfirmPassword('')
+        } finally {
+          setSaving(false)
+        }
+      },
+    })
   }
 
   return <section className="profile-page-grid">
@@ -1002,9 +1016,9 @@ function TeamPage({ currentUser, users, temporaryPassword, onClearTemporaryPassw
   users: User[]
   temporaryPassword: { email: string; password: string } | null
   onClearTemporaryPassword: () => void
-  onCreate: (payload: UserCreateRequest) => Promise<boolean>
+  onCreate: (payload: UserCreateRequest) => Promise<void>
   onUpdate: (userId: string, changes: UserUpdateRequest) => Promise<void>
-  onResetPassword: (user: User) => void
+  onResetPassword: (user: User) => Promise<void>
   onError: (message: string) => void
   onConfirmAction: (request: ConfirmationRequest) => void
   onResetAll: () => Promise<void>
@@ -1015,17 +1029,27 @@ function TeamPage({ currentUser, users, temporaryPassword, onClearTemporaryPassw
   const [role, setRole] = useState<UserRole>('agent')
   const [saving, setSaving] = useState(false)
 
-  const submit = async (event: FormEvent<HTMLFormElement>) => {
+  const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    setSaving(true)
     onError('')
-    const created = await onCreate({ full_name: fullName, email, role })
-    setSaving(false)
-    if (!created) return
-    setFullName('')
-    setEmail('')
-    setRole('agent')
-    setShowForm(false)
+    const newUser = { full_name: fullName, email, role }
+    onConfirmAction({
+      title: 'Create this team account?',
+      message: `Create ${newUser.full_name} (${newUser.email}) as ${newUser.role}? A temporary password will be generated and shown once; share it privately, and the user will have to change it at first sign-in.`,
+      confirmLabel: 'Create account',
+      onConfirm: async () => {
+        setSaving(true)
+        try {
+          await onCreate(newUser)
+          setFullName('')
+          setEmail('')
+          setRole('agent')
+          setShowForm(false)
+        } finally {
+          setSaving(false)
+        }
+      },
+    })
   }
 
   return <section className="panel full-panel team-page-panel">
@@ -1053,7 +1077,16 @@ function TeamPage({ currentUser, users, temporaryPassword, onClearTemporaryPassw
         <div className="avatar avatar-user">{initials(member.full_name)}</div>
         <div className="team-member-identity"><strong>{member.full_name}</strong><span>{member.email}</span></div>
         {currentUser.role === 'owner' && member.id !== currentUser.id
-          ? <label className="member-role-control"><span>Role</span><select aria-label={`Role for ${member.full_name}`} value={member.role} onChange={(event) => void onUpdate(member.id, { role: event.target.value as UserRole })}><option value="manager">Manager</option><option value="agent">Agent</option></select></label>
+          ? <label className="member-role-control"><span>Role</span><select aria-label={`Role for ${member.full_name}`} value={member.role} onChange={(event) => {
+            const nextRole = event.target.value as UserRole
+            if (nextRole === member.role) return
+            onConfirmAction({
+              title: `Change ${member.full_name}'s role?`,
+              message: `This changes their workspace permissions from ${member.role} to ${nextRole} and revokes their current sessions.`,
+              confirmLabel: 'Change role',
+              onConfirm: () => onUpdate(member.id, { role: nextRole }),
+            })
+          }}><option value="manager">Manager</option><option value="agent">Agent</option></select></label>
           : <span className="role-pill">{member.role}</span>}
         <span className={`member-status ${member.is_active ? 'member-status-active' : ''}`}>{member.is_active ? 'Active' : 'Inactive'}</span>
         {member.id !== currentUser.id && <div className="member-actions">
@@ -1064,8 +1097,18 @@ function TeamPage({ currentUser, users, temporaryPassword, onClearTemporaryPassw
               confirmLabel: 'Deactivate account',
               onConfirm: () => onUpdate(member.id, { is_active: false }),
             })
-            : void onUpdate(member.id, { is_active: true })}>{member.is_active ? 'Deactivate' : 'Reactivate'}</button>
-          <button className="icon-button" aria-label={`Reset password for ${member.full_name}`} title="Reset password" onClick={() => onResetPassword(member)}><RotateCcw size={16} /></button>
+            : onConfirmAction({
+              title: `Reactivate ${member.full_name}?`,
+              message: 'They will regain access to the workspace using their current password, unless an administrator resets it separately.',
+              confirmLabel: 'Reactivate account',
+              onConfirm: () => onUpdate(member.id, { is_active: true }),
+            })}>{member.is_active ? 'Deactivate' : 'Reactivate'}</button>
+          <button className="icon-button" aria-label={`Reset password for ${member.full_name}`} title="Reset password" onClick={() => onConfirmAction({
+            title: `Reset ${member.full_name}'s password?`,
+            message: 'Their existing password and sessions will stop working. A temporary password will be generated and shown once; share it privately. They must choose a new password at their next sign-in.',
+            confirmLabel: 'Reset password',
+            onConfirm: () => onResetPassword(member),
+          })}><RotateCcw size={16} /></button>
         </div>}
       </article>)}
       {!users.length && <EmptyState title="No team members found" description="New accounts will appear here after they are created." />}

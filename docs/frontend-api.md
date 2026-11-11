@@ -24,6 +24,11 @@ endpoint before accessing other CRM routes. Changing a password returns a new
 token; changing an account's role or deactivating it revokes its existing
 tokens.
 
+The UI confirms account creation, individual/bulk password resets, password
+changes, role changes, and account activation/deactivation before sending the
+request. Confirmation does not replace server-side role checks. For the full
+token and data lifecycle, see [Authentication flow and user-data handling](./authentication-and-data.md).
+
 ### Roles and visibility
 
 - **Owner:** access to all leads, tasks, team members, and team administration.
@@ -74,6 +79,11 @@ response.
 | `PATCH /api/v1/users/{user_id}` | Owner, manager | Update a managed user's name, role, or active status. |
 | `POST /api/v1/users/{user_id}/password-reset` | Owner, manager | Reset a managed user's password and return the temporary password. |
 | `POST /api/v1/users/password-reset-all` | Owner | Reset every account in the team and download a CSV of temporary passwords. |
+
+Account creation, individual password resets, role changes, and activation
+changes require confirmation in the frontend. The server independently checks
+administrator permissions and applies the change only after receiving the
+request.
 
 ### Login request
 

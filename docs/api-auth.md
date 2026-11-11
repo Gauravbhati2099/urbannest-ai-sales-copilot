@@ -1,5 +1,9 @@
 # Authentication and scoped API contract
 
+For a frontend-oriented account lifecycle diagram and details on token,
+password, profile, audit, and AI data handling, see
+[Authentication flow and user-data handling](./authentication-and-data.md).
+
 The FastAPI application is started from the `backend` directory with:
 
 ```powershell
@@ -96,6 +100,9 @@ token. Password reset, password change, role changes, and deactivation revoke
 previous access tokens. The API prevents deactivating or demoting the team's
 last active owner. Passwords are hashed with Argon2; store temporary
 credentials securely and do not send them over an untrusted channel.
+The frontend requires explicit confirmation before account creation, password
+changes/resets, role changes, and account activation/deactivation; these
+prompts supplement but do not replace backend authorization.
 
 The owner-only bulk reset endpoint is intentionally destructive: it rotates
 credentials and invalidates sessions for every account in the owner's team.

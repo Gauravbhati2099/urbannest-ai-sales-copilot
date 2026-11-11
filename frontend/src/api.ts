@@ -63,7 +63,7 @@ export interface Task {
   team_id: string
   lead_id: string
   assigned_to: string
-  assigned_to_name: string
+  assigned_to_name?: string
   created_by: string
   title: string
   description: string | null
@@ -78,8 +78,9 @@ export interface Task {
 export interface DashboardTask {
   id: string
   lead_id: string
+  assigned_to: string
   lead_name: string
-  assigned_to_name: string
+  assigned_to_name?: string
   lead_status: LeadStatus
   title: string
   due_at: string

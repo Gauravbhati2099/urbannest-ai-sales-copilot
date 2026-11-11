@@ -11,6 +11,7 @@ from app.db.models import LeadStatus, TaskStatus
 class DashboardTask(BaseModel):
     id: UUID
     lead_id: UUID
+    assigned_to: UUID
     lead_name: str
     assigned_to_name: str
     lead_status: LeadStatus

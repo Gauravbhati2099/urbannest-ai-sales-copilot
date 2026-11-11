@@ -1485,6 +1485,10 @@ class APIAuthAndAuthorizationTests(unittest.TestCase):
             dashboard.json()["due_today"][0]["assigned_to_name"],
             "agent",
         )
+        self.assertEqual(
+            dashboard.json()["due_today"][0]["assigned_to"],
+            str(self.agent_id),
+        )
 
     def test_ai_score_is_scoped_and_persists_structured_score_and_usage(self) -> None:
         ai_result = AIResult(

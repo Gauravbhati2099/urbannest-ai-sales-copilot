@@ -71,6 +71,7 @@ def get_dashboard_summary(
             DashboardTask(
                 id=row[0].id,
                 lead_id=row[0].lead_id,
+                assigned_to=row[0].assigned_to,
                 lead_name=row[1],
                 assigned_to_name=row[3],
                 lead_status=row[2],

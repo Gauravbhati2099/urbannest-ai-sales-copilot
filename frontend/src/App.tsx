@@ -87,13 +87,25 @@ const sourceLabels: Record<LeadSource, string> = {
 }
 const CURRENT_YEAR = new Date().getFullYear()
 
-function initials(name: string) {
-  return name
+function initials(name: string | null | undefined) {
+  return (name ?? '')
+    .trim()
     .split(/\s+/)
+    .filter(Boolean)
     .slice(0, 2)
     .map((part) => part[0] ?? '')
     .join('')
     .toUpperCase()
+}
+
+function taskAssigneeName(
+  task: Pick<Task, 'assigned_to' | 'assigned_to_name'>,
+  users: User[],
+  currentUser: User,
+) {
+  return task.assigned_to_name
+    || users.find((user) => user.id === task.assigned_to)?.full_name
+    || (task.assigned_to === currentUser.id ? currentUser.full_name : 'Team member')
 }
 
 function formatCurrency(value: number | null | undefined) {
@@ -599,13 +611,13 @@ function App() {
                 <EmptyState title="Workspace access is disabled" description="Your current role does not have permission to read CRM records." />
               )}
               {canReadWorkspace && activePage === 'overview' && (
-                <OverviewPage dashboard={dashboard} leads={leads} events={auditEvents} now={renderTime.getTime()} onOpenLead={setSelectedLead} onOpenLeadById={openLeadById} onOpenTasks={() => setPage('tasks')} onSeeAllActivity={() => setPage('activity')} onCompleteTask={completeTask} onOpenLeads={() => setPage('leads')} onOpenEvent={(event) => void openAuditEvent(event)} canWrite={canWriteWorkspace} />
+                <OverviewPage dashboard={dashboard} leads={leads} events={auditEvents} users={teamUsers} currentUser={user} now={renderTime.getTime()} onOpenLead={setSelectedLead} onOpenLeadById={openLeadById} onOpenTasks={() => setPage('tasks')} onSeeAllActivity={() => setPage('activity')} onCompleteTask={completeTask} onOpenLeads={() => setPage('leads')} onOpenEvent={(event) => void openAuditEvent(event)} canWrite={canWriteWorkspace} />
               )}
               {canReadWorkspace && activePage === 'leads' && (
                 <LeadsPage leads={leads} query={query} setQuery={setQuery} searchRef={leadSearchRef} statusFilter={statusFilter} setStatusFilter={setStatusFilter} onOpenLead={setSelectedLead} onUpdateStatus={updateLeadStatus} onAddLead={() => setShowCreateLead(true)} onImportFile={importCsv} importErrors={importErrors} onDismissImportErrors={() => dispatch({ type: 'import-errors-cleared' })} canImport={canWriteWorkspace && user.role !== 'agent'} canWrite={canWriteWorkspace} loading={loading} />
               )}
               {canReadWorkspace && activePage === 'tasks' && (
-                <TasksPage tasks={visibleTasks} filter={taskFilter} setFilter={setTaskFilter} now={renderTime.getTime()} onComplete={completeTask} onOpenLead={openLeadById} canWrite={canWriteWorkspace} />
+                <TasksPage tasks={visibleTasks} filter={taskFilter} setFilter={setTaskFilter} users={teamUsers} currentUser={user} now={renderTime.getTime()} onComplete={completeTask} onOpenLead={openLeadById} canWrite={canWriteWorkspace} />
               )}
               {canReadWorkspace && activePage === 'activity' && <ActivityPage events={auditEvents} unreadCount={unreadCount} onMarkRead={markRead} onOpenEvent={(event) => void openAuditEvent(event)} />}
               {activePage === 'team' && canManageTeam && <TeamPage currentUser={user} users={teamUsers} temporaryPassword={temporaryPassword} onClearTemporaryPassword={() => setTemporaryPassword(null)} onCreate={createTeamUser} onUpdate={updateTeamUser} onResetPassword={resetTeamUserPassword} onError={setError} onConfirmAction={setConfirmation} onResetAll={resetAllUserPasswords} />}
@@ -750,8 +762,8 @@ function ConfirmationDialog({ request, onCancel, onConfirmed }: { request: Confi
   </div>
 }
 
-function OverviewPage({ dashboard, leads, events, now, onOpenLead, onOpenLeadById, onOpenTasks, onSeeAllActivity, onCompleteTask, onOpenLeads, onOpenEvent, canWrite }: {
-  dashboard: Dashboard | null; leads: Lead[]; events: AuditEvent[]
+function OverviewPage({ dashboard, leads, events, users, currentUser, now, onOpenLead, onOpenLeadById, onOpenTasks, onSeeAllActivity, onCompleteTask, onOpenLeads, onOpenEvent, canWrite }: {
+  dashboard: Dashboard | null; leads: Lead[]; events: AuditEvent[]; users: User[]; currentUser: User
   now: number
   onOpenLead: (lead: Lead) => void; onOpenLeadById: (leadId: string) => void
   onOpenTasks: () => void; onSeeAllActivity: () => void
@@ -824,7 +836,7 @@ function OverviewPage({ dashboard, leads, events, now, onOpenLead, onOpenLeadByI
           return <div className="followup-item" key={task.id}>
             {canWrite && <button className="task-check" title="Mark complete" onClick={() => onCompleteTask(task)}><Check size={13} /></button>}
               <button className="followup-copy" onClick={() => lead ? onOpenLead(lead) : onOpenLeadById(task.lead_id)}><strong>{task.title}</strong><span>{task.lead_name}</span></button>
-            <span className="task-assignee"><span className="avatar avatar-xs avatar-user">{initials(task.assigned_to_name)}</span>{task.assigned_to_name}</span>
+            <span className="task-assignee"><span className="avatar avatar-xs avatar-user">{initials(taskAssigneeName(task, users, currentUser))}</span>{taskAssigneeName(task, users, currentUser)}</span>
             <span className={`task-time ${taskIsOverdue(task.due_at, now) ? 'task-time-overdue' : ''}`}><Clock3 size={12} />{relativeDate(task.due_at)}</span>
           </div>
         })}</div> : <EmptyState title="You’re all caught up" description="No overdue or due-today follow-ups to show." />}
@@ -867,8 +879,9 @@ function LeadsPage({ leads, query, setQuery, searchRef, statusFilter, setStatusF
   </section>
 }
 
-function TasksPage({ tasks, filter, setFilter, now, onComplete, onOpenLead, canWrite }: {
+function TasksPage({ tasks, filter, setFilter, users, currentUser, now, onComplete, onOpenLead, canWrite }: {
   tasks: (Task | Dashboard['due_today'][number])[]; filter: 'all' | 'today' | 'overdue' | 'completed'
+  users: User[]; currentUser: User
   setFilter: (filter: 'all' | 'today' | 'overdue' | 'completed') => void; now: number
   onComplete: (task: Pick<Task, 'id'>) => void; onOpenLead: (leadId: string) => void
   canWrite: boolean
@@ -881,7 +894,7 @@ function TasksPage({ tasks, filter, setFilter, now, onComplete, onOpenLead, canW
       return <div className={`task-row ${completed ? 'task-row-completed' : ''}`} key={task.id}>
         {completed ? <span className="task-completed-mark"><Check size={14} /></span> : canWrite ? <button className="task-check large-check" title="Mark complete" aria-label={`Mark ${task.title} complete`} onClick={() => onComplete(task)}><Check size={14} /></button> : <span className="task-completed-mark" aria-hidden="true" />}
         <div className="task-row-main"><strong>{task.title}</strong><button className="task-lead-link" onClick={() => onOpenLead(task.lead_id)}>{'lead_name' in task ? task.lead_name : 'Open lead'}<ArrowUpRight size={12} /></button>{'description' in task && task.description && <span className="task-description">{task.description}</span>}</div>
-        <span className="task-assignee"><span className="avatar avatar-xs avatar-user">{initials(task.assigned_to_name)}</span>{task.assigned_to_name}</span>
+        <span className="task-assignee"><span className="avatar avatar-xs avatar-user">{initials(taskAssigneeName(task, users, currentUser))}</span>{taskAssigneeName(task, users, currentUser)}</span>
         <span className={`task-due ${!completed && taskIsOverdue(task.due_at, now) ? 'task-time-overdue' : ''}`}><CalendarDays size={15} />{completed && 'completed_at' in task && task.completed_at ? `Completed ${relativeDate(task.completed_at)}` : relativeDate(task.due_at)}</span>
       </div>
     })}</div> : <EmptyState title={filter === 'overdue' ? 'Nothing overdue' : filter === 'today' ? 'Nothing due today' : filter === 'completed' ? 'No completed follow-ups yet' : 'No open follow-ups'} description={filter === 'all' ? 'Create a follow-up from any lead to keep the conversation moving.' : filter === 'completed' ? 'Finished follow-ups will stay here for reference.' : 'You’re all caught up. Keep it that way.'} />}

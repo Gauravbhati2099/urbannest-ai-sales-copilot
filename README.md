@@ -89,6 +89,7 @@ indexing. This frontend does not expose AI inference controls yet.
 - [API and authentication contract](docs/api-auth.md)
 - [Frontend API guide](docs/frontend-api.md)
 - [Authentication flow and user-data handling](docs/authentication-and-data.md)
+- [Assessment feature and completion checklist](docs/assessment-readiness.md)
 
 Do not use real client data. Demo credentials should be distributed securely
 and never committed to this repository.

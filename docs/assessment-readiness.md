@@ -1,6 +1,6 @@
 # Assessment feature and completion checklist
 
-**Snapshot date:** 2026-11-11  
+**Snapshot date:** 2026-11-11
 **Purpose:** summarize the implemented UrbanNest CRM, identify remaining work
 for assessment completion, and separate optional bonus ideas from required
 acceptance checks. This describes the repository; it does not certify the

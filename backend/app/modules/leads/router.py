@@ -169,6 +169,7 @@ def list_leads(
     budget_min_inr: Annotated[int | None, Query(ge=0)] = None,
     budget_max_inr: Annotated[int | None, Query(ge=0)] = None,
 ) -> list[Lead]:
+    """List visible leads with optional pagination, search, and field filters."""
     statement = accessible_lead_statement(current_user)
     if status_filter is not None:
         statement = statement.where(Lead.status == status_filter)
@@ -221,6 +222,7 @@ def list_leads(
 def create_lead(
     payload: LeadCreate, current_user: CurrentUser, session: DatabaseSession
 ) -> Lead:
+    """Create a lead; agents can only assign new leads to themselves."""
     _validate_budget_range(payload.budget_min_inr, payload.budget_max_inr)
     assigned_to = payload.assigned_to
     if current_user.role is UserRole.AGENT:
@@ -266,6 +268,7 @@ def create_lead(
 
 @router.get("/{lead_id}", response_model=LeadRead)
 def read_lead(lead_id: UUID, current_user: CurrentUser, session: DatabaseSession) -> Lead:
+    """Return one lead visible to the authenticated user."""
     return get_accessible_lead(session, current_user, lead_id)
 
 
@@ -276,6 +279,7 @@ def update_lead(
     current_user: CurrentUser,
     session: DatabaseSession,
 ) -> Lead:
+    """Partially update a visible lead; only managers and owners can reassign it."""
     lead = get_accessible_lead(session, current_user, lead_id)
     changes = payload.model_dump(exclude_unset=True)
     if not changes:
@@ -410,6 +414,7 @@ def list_activities(
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> list[Activity]:
+    """List a lead's activity newest first."""
     lead = get_accessible_lead(session, current_user, lead_id)
     statement = (
         select(Activity)
@@ -432,6 +437,7 @@ def create_activity(
     current_user: CurrentUser,
     session: DatabaseSession,
 ) -> Activity:
+    """Record an activity on a visible lead and mark prior AI scores stale."""
     lead = get_accessible_lead(session, current_user, lead_id)
     activity = Activity(
         team_id=lead.team_id,
@@ -478,6 +484,7 @@ async def import_leads_csv(
     current_user: CurrentUser,
     session: DatabaseSession,
 ) -> CSVImportResult:
+    """Import up to 500 CSV rows; managers and owners receive per-row errors."""
     if current_user.role not in MANAGER_ROLES:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
     if file.content_type not in {"text/csv", "application/csv", "application/vnd.ms-excel"}:
@@ -585,6 +592,7 @@ def create_public_lead(
     request: Request,
     session: DatabaseSession,
 ) -> Lead:
+    """Accept an unauthenticated website inquiry for the configured team."""
     enforce_rate_limits(
         session,
         limits=(

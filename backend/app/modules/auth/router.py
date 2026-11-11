@@ -101,6 +101,11 @@ def login(
     request: Request,
     session: DatabaseSession,
 ) -> LoginResponse:
+    """Authenticate credentials and return an access token and user profile.
+
+    Returns 401 for invalid credentials and 429 when the IP or email limit is
+    exceeded. A successful login clears that email's failed-attempt counter.
+    """
     window_seconds = rate_limit_setting("LOGIN_RATE_WINDOW_SECONDS", 900)
     enforce_rate_limits(
         session,
@@ -143,6 +148,7 @@ def change_password(
     current_user: CurrentUser,
     session: DatabaseSession,
 ) -> LoginResponse:
+    """Change the authenticated user's password and return a replacement token."""
     if not password_hash.verify(payload.current_password, current_user.password_hash):
         raise HTTPException(status_code=400, detail="Current password is incorrect")
     if password_hash.verify(payload.new_password, current_user.password_hash):
@@ -176,6 +182,7 @@ def change_password(
 
 @router.get("/me", response_model=UserRead)
 def read_current_user(current_user: CurrentUser) -> UserRead:
+    """Return the authenticated user's profile and current account flags."""
     return UserRead.model_validate(current_user)
 
 
@@ -185,6 +192,7 @@ def update_current_profile(
     current_user: CurrentUser,
     session: DatabaseSession,
 ) -> UserRead:
+    """Update the authenticated user's editable profile fields."""
     changes = payload.model_dump(exclude_unset=True)
     if not changes:
         raise HTTPException(status_code=422, detail="Provide at least one field to update")
@@ -215,6 +223,7 @@ def list_team_users(
     offset: Annotated[int, Query(ge=0)] = 0,
     is_active: bool | None = None,
 ) -> list[User]:
+    """List team accounts; owners see all roles and managers see agents only."""
     if current_user.role not in MANAGER_ROLES:
         raise HTTPException(status_code=403, detail="Forbidden")
     statement = select(User).where(User.team_id == current_user.team_id)
@@ -235,6 +244,7 @@ def create_team_user(
     current_user: CurrentUser,
     session: DatabaseSession,
 ) -> UserCreatedResponse:
+    """Create an active team account and return its one-time temporary password."""
     if current_user.role not in MANAGER_ROLES:
         raise HTTPException(status_code=403, detail="Forbidden")
     if current_user.role is UserRole.MANAGER and payload.role is not UserRole.AGENT:
@@ -290,6 +300,7 @@ def update_team_user(
     current_user: CurrentUser,
     session: DatabaseSession,
 ) -> UserRead:
+    """Update a managed account's name, role, or active status."""
     if current_user.role not in MANAGER_ROLES:
         raise HTTPException(status_code=403, detail="Forbidden")
     user = _managed_user(session, current_user, user_id)
@@ -353,6 +364,7 @@ def reset_user_password(
     current_user: CurrentUser,
     session: DatabaseSession,
 ) -> PasswordResetResponse:
+    """Reset another active team member's password and revoke their sessions."""
     if current_user.role not in MANAGER_ROLES:
         raise HTTPException(status_code=403, detail="Forbidden")
     user = _managed_user(session, current_user, user_id)
@@ -391,6 +403,7 @@ def reset_all_team_passwords(
     current_user: CurrentUser,
     session: DatabaseSession,
 ) -> Response:
+    """Reset every team account and return the temporary passwords as a CSV download."""
     if current_user.role is not UserRole.OWNER:
         raise HTTPException(
             status_code=403,

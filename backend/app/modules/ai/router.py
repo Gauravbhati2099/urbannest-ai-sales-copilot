@@ -142,6 +142,7 @@ def read_latest_score(
     current_user: CurrentUser,
     session: DatabaseSession,
 ) -> LeadScore | None:
+    """Return the newest stored AI score for a visible lead, if one exists."""
     lead = get_accessible_lead(session, current_user, lead_id)
     return session.scalar(
         select(LeadScore)
@@ -157,6 +158,7 @@ def score_lead(
     current_user: CurrentUser,
     session: DatabaseSession,
 ) -> LeadScoreResult:
+    """Generate and store a new AI priority score for a visible lead."""
     lead = get_accessible_lead(session, current_user, lead_id)
     context = _lead_context(lead, session)
     context_digest = hash_context(context)
@@ -211,6 +213,7 @@ def draft_message(
     current_user: CurrentUser,
     session: DatabaseSession,
 ) -> MessageDraftRead:
+    """Generate and save a message draft for review; this endpoint never sends it."""
     lead = get_accessible_lead(session, current_user, lead_id)
     context = _lead_context(lead, session)
     prompt = (
@@ -255,6 +258,7 @@ def extract_notes(
     current_user: CurrentUser,
     session: DatabaseSession,
 ) -> NoteExtractionResult:
+    """Extract suggested lead fields and a possible task from notes without saving them."""
     lead = get_accessible_lead(session, current_user, lead_id)
     sanitized_notes = redact_contact_details(payload.notes, maximum_length=5000)
     prompt = (

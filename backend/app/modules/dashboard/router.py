@@ -31,6 +31,7 @@ def get_dashboard_summary(
     current_user: CurrentUser,
     session: DatabaseSession,
 ) -> DashboardSummary:
+    """Return role-scoped lead totals and open-task due and overdue summaries."""
     timezone_info = _dashboard_timezone()
     now_local = datetime.now(timezone_info)
     today_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)

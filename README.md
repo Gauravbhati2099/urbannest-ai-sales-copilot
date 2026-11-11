@@ -87,6 +87,7 @@ indexing. This frontend does not expose AI inference controls yet.
 - [Database ERD](docs/ERD.md)
 - [Technology stack](docs/techstack.md)
 - [API and authentication contract](docs/api-auth.md)
+- [Frontend API guide](docs/frontend-api.md)
 
 Do not use real client data. Demo credentials should be distributed securely
 and never committed to this repository.

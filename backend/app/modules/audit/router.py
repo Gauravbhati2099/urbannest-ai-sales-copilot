@@ -87,6 +87,7 @@ def list_audit_events(
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
 ) -> AuditFeedResponse:
+    """Return visible audit events and the current unread count."""
     cursor = session.get(AuditReadCursor, current_user.id)
     last_read_at = cursor.last_read_at if cursor is not None else None
     events = list(
@@ -146,6 +147,7 @@ def get_unread_count(
     current_user: CurrentUser,
     session: DatabaseSession,
 ) -> AuditUnreadCount:
+    """Return the authenticated user's unread audit-event count."""
     cursor = session.get(AuditReadCursor, current_user.id)
     last_read_at = cursor.last_read_at if cursor is not None else None
     return AuditUnreadCount(
@@ -158,6 +160,7 @@ def mark_audit_events_read(
     current_user: CurrentUser,
     session: DatabaseSession,
 ) -> AuditReadResponse:
+    """Mark currently visible audit events as read and return the read cursor."""
     return AuditReadResponse(last_read_at=mark_events_read(session, current_user))
 
 
@@ -226,6 +229,7 @@ def stream_audit_events(
     request: Request,
     session: DatabaseSession,
 ) -> StreamingResponse:
+    """Open an authenticated Server-Sent Events stream for live audit updates."""
     scheme, separator, token = request.headers.get("Authorization", "").partition(" ")
     if scheme.lower() != "bearer" or not separator or not token:
         raise HTTPException(

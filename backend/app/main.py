@@ -49,6 +49,7 @@ def create_app() -> FastAPI:
 
     @app.get("/health", tags=["health"])
     def health() -> dict[str, str]:
+        """Report that the API process is responsive."""
         return {"status": "ok"}
 
     return app

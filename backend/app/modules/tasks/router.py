@@ -61,6 +61,7 @@ def list_tasks(
     due: Literal["today", "overdue"] | None = None,
     status_filter: Annotated[TaskStatus | None, Query(alias="status")] = None,
 ) -> list[Task]:
+    """List visible tasks; defaults to open tasks and can filter by due window."""
     statement = accessible_task_statement(current_user)
     statement = statement.where(
         Task.status == (status_filter or TaskStatus.OPEN)
@@ -90,6 +91,7 @@ def read_task(
     current_user: CurrentUser,
     session: DatabaseSession,
 ) -> Task:
+    """Return one task visible to the authenticated user."""
     return get_accessible_task(session, current_user, task_id)
 
 
@@ -97,6 +99,7 @@ def read_task(
 def create_task(
     payload: TaskCreate, current_user: CurrentUser, session: DatabaseSession
 ) -> Task:
+    """Create a follow-up task for a visible lead."""
     lead = get_accessible_lead(session, current_user, payload.lead_id)
     assigned_to = (
         payload.assigned_to
@@ -145,6 +148,7 @@ def update_task(
     current_user: CurrentUser,
     session: DatabaseSession,
 ) -> Task:
+    """Update a task's status; owners and managers can also change its assignee."""
     task = get_accessible_task(session, current_user, task_id)
     if (
         current_user.role not in MANAGER_ROLES

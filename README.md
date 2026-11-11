@@ -16,14 +16,20 @@ permissions.
 
 2. Copy `backend\.env.example` to `backend\.env` and configure PostgreSQL and a
    random `JWT_SECRET_KEY` (at least 32 bytes). Keep `.env` private.
-3. From `backend`, run migrations and start the API:
+3. From `backend`, start the API. The startup command validates configuration,
+   checks database connectivity, applies pending migrations, and confirms the
+   database is at the current migration head before serving requests:
 
    ```powershell
-   ..\.venv\Scripts\alembic.exe upgrade head
-   ..\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
+   ..\.venv\Scripts\python.exe -m scripts.start
    ```
 
 4. Open `http://127.0.0.1:8000/docs` for the API.
+
+For Render, set the Start Command to `python -m scripts.start` if the service's
+Root Directory is `backend`; if the Root Directory is the repository, use
+`python backend/scripts/start.py`. Set `CORS_ORIGINS` to the exact frontend
+origin(s), comma-separated and without paths or trailing slashes.
 
 Run backend tests from `backend`:
 

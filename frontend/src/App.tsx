@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type FormEvent } from 'react'
 import {
   Activity as ActivityIcon,
-  ArrowDownRight,
   ArrowUpRight,
   Bell,
   CalendarDays,
@@ -26,7 +25,6 @@ import {
   RefreshCw,
   Search,
   SlidersHorizontal,
-  Sparkles,
   Sun,
   Upload,
   UserPlus,
@@ -562,13 +560,13 @@ function App() {
       <aside className={`sidebar ${sidebarCollapsed ? 'sidebar-collapsed' : ''} ${mobileNavOpen ? 'sidebar-open' : ''}`}>
         <a className="brand" href="#" onClick={(event) => { event.preventDefault(); setPage('overview') }}>
           <span className="brand-mark">U</span>
-          <span className="brand-copy"><strong>urbannest</strong><small>REALTY CRM</small></span>
+          <span className="brand-copy"><strong>urbannest</strong><small>Realty CRM</small></span>
         </a>
         <button className="sidebar-toggle icon-button" aria-label={sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation'} title={sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation'} onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}>
           {sidebarCollapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
         </button>
 
-        <div className="nav-caption">WORKSPACE</div>
+        <div className="nav-caption">Workspace</div>
         <nav className="primary-nav" aria-label="Main navigation">
           {canReadWorkspace && <>
             <NavButton label="Overview" icon={<LayoutDashboard size={18} />} active={activePage === 'overview'} onClick={() => { setPage('overview'); setMobileNavOpen(false) }}>Overview</NavButton>
@@ -618,8 +616,8 @@ function App() {
           <div className="page-heading">
             <div>
               <p className="eyebrow">{formatDate(renderTime.toISOString(), { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
-              <h1>{activePage === 'overview' ? `Good ${renderTime.getHours() < 12 ? 'morning' : renderTime.getHours() < 17 ? 'afternoon' : 'evening'}, ${user.full_name.split(' ')[0]}` : pageTitle}<span className="heading-period">.</span></h1>
-              <p className="heading-subtitle">{activePage === 'overview' ? 'Here’s what’s happening with your sales today.' : activePage === 'leads' ? 'Keep every conversation moving forward.' : activePage === 'tasks' ? 'A thoughtful follow-up can make all the difference.' : activePage === 'activity' ? 'A shared view of what’s changing across your team.' : activePage === 'team' ? 'Manage team access and account setup.' : 'Your account details and sign-in security.'}</p>
+              <h1>{activePage === 'overview' ? 'Sales overview' : pageTitle}</h1>
+              <p className="heading-subtitle">{activePage === 'overview' ? 'A clear view of your leads and next steps' : activePage === 'leads' ? 'Track each enquiry from first contact to decision' : activePage === 'tasks' ? 'Keep client conversations moving with timely follow-ups' : activePage === 'activity' ? 'Changes across leads, follow-ups, and your team' : activePage === 'team' ? 'Manage team access and account setup' : 'Your account details and sign-in security'}</p>
             </div>
             <div className="heading-actions">
               <button className="button button-secondary refresh-button" onClick={() => void refresh()} disabled={loading}><RefreshCw size={16} className={loading ? 'spinning' : ''} /><span>Refresh</span></button>
@@ -705,21 +703,21 @@ function LoginScreen({ onLogin, error, setError, theme, onToggleTheme }: { onLog
   return (
     <div className="auth-page">
       <div className="auth-art">
-        <a className="brand brand-light" href="#"><span className="brand-mark">U</span><span className="brand-copy"><strong>urbannest</strong><small>REALTY CRM</small></span></a>
+        <a className="brand brand-light" href="#"><span className="brand-mark">U</span><span className="brand-copy"><strong>urbannest</strong><small>Realty CRM</small></span></a>
         <div className="art-copy">
-          <span className="art-kicker"><span /> YOUR NEXT MOVE, MADE CLEAR</span>
-          <h1>Every lead<br />has a <em>home.</em></h1>
-          <p>One calm place to build better client relationships and close with confidence.</p>
+          <span className="art-kicker"><span /> A clearer view of every enquiry</span>
+          <h1>Every lead<br />has a <em>home</em></h1>
+          <p>Keep client details, pipeline stages, and follow-ups together in one workspace.</p>
         </div>
         <div className="art-building"><div className="building-sun" /><div className="building-tower tower-one"><i /><i /><i /><i /><i /><i /><i /><i /><i /><i /><i /><i /></div><div className="building-tower tower-two"><i /><i /><i /><i /><i /><i /><i /><i /></div><div className="building-house"><i /><i /><i /><i /></div><div className="building-ground" /></div>
-        <p className="art-footnote">MADE FOR THE WAY REAL ESTATE REALLY WORKS.</p>
+        <p className="art-footnote">UrbanNest Realty CRM</p>
       </div>
       <div className="auth-main">
         <ThemeButton theme={theme} onToggle={onToggleTheme} className="auth-theme-toggle" />
         <div className="auth-form-wrap">
-          <span className="auth-overline">{forgotPassword ? 'ACCOUNT RECOVERY' : 'WELCOME BACK'}</span>
-          <h2>{forgotPassword ? <>Request a password<br />reset<span className="heading-period">.</span></> : <>Sign in to your<br />workspace<span className="heading-period">.</span></>}</h2>
-          <p className="auth-description">{forgotPassword ? 'If your account is active, your team owner can issue a temporary password.' : 'Good to see you again. Let’s pick up where you left off.'}</p>
+          <span className="auth-overline">{forgotPassword ? 'Password recovery' : 'Your workspace'}</span>
+          <h2>{forgotPassword ? <>Request a password<br />reset</> : <>Sign in to your<br />workspace</>}</h2>
+          <p className="auth-description">{forgotPassword ? 'If your account is active, your team owner can issue a temporary password.' : 'View the leads, pipeline, and follow-ups your team is working on'}</p>
           <form className="auth-form" onSubmit={(event) => void submit(event)}>
             <label>Email address<input type="email" autoComplete={forgotPassword ? 'email' : 'username'} value={email} onChange={(event) => { setEmail(event.target.value); setRecoverySent(false) }} placeholder="you@urbannest.in" required /></label>
             {!forgotPassword && <label>Password<span className="password-input-wrap"><input type={showPassword ? 'text' : 'password'} autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Enter your password" required /><button className="password-visibility-toggle" type="button" aria-label={showPassword ? 'Hide password' : 'Show password'} aria-pressed={showPassword} onClick={() => setShowPassword((visible) => !visible)}>{showPassword ? <EyeOff size={16} /> : <Eye size={16} />}</button></span></label>}
@@ -765,7 +763,7 @@ function PasswordScreen({ token, onComplete, onSignOut, theme, onToggleTheme }: 
     }
   }
 
-  return <div className="password-page"><div className="password-card"><div className="password-card-head"><span className="brand-mark">U</span><ThemeButton theme={theme} onToggle={onToggleTheme} /></div><span className="auth-overline">ONE QUICK STEP</span><h1>Make it your own<span className="heading-period">.</span></h1><p>Your account has a temporary password. Create a new one to continue.</p><form className="auth-form" onSubmit={submit}><label>Temporary password<input type="password" value={current} onChange={(event) => setCurrent(event.target.value)} required /></label><label>New password<input type="password" minLength={12} value={next} onChange={(event) => setNext(event.target.value)} required /><small className="field-hint">Use at least 12 characters.</small></label><label>Confirm new password<input type="password" value={confirm} onChange={(event) => setConfirm(event.target.value)} required /></label>{error && <div className="form-error"><CircleAlert size={16} />{error}</div>}<button className="button button-primary auth-submit">Review password change<ArrowUpRight size={17} /></button></form><button className="text-button signout-link" onClick={() => setShowSignOutConfirmation(true)}>Sign out instead</button></div>{showSignOutConfirmation && <ConfirmationDialog request={{ title: 'Sign out?', message: 'You’ll need to sign in again to continue setting up your account.', confirmLabel: 'Sign out', onConfirm: onSignOut }} onCancel={() => setShowSignOutConfirmation(false)} onConfirmed={() => setShowSignOutConfirmation(false)} />}{showPasswordConfirmation && <ConfirmationDialog request={{ title: 'Set your new password?', message: 'This replaces your temporary password. Your existing session will be renewed with the new credential.', confirmLabel: 'Save new password', onConfirm: changePassword }} onCancel={() => setShowPasswordConfirmation(false)} onConfirmed={() => setShowPasswordConfirmation(false)} />}</div>
+  return <div className="password-page"><div className="password-card"><div className="password-card-head"><span className="brand-mark">U</span><ThemeButton theme={theme} onToggle={onToggleTheme} /></div><span className="auth-overline">Password setup</span><h1>Make it your own</h1><p>Your account has a temporary password. Create a new one to continue.</p><form className="auth-form" onSubmit={submit}><label>Temporary password<input type="password" value={current} onChange={(event) => setCurrent(event.target.value)} required /></label><label>New password<input type="password" minLength={12} value={next} onChange={(event) => setNext(event.target.value)} required /><small className="field-hint">Use at least 12 characters.</small></label><label>Confirm new password<input type="password" value={confirm} onChange={(event) => setConfirm(event.target.value)} required /></label>{error && <div className="form-error"><CircleAlert size={16} />{error}</div>}<button className="button button-primary auth-submit">Review password change<ArrowUpRight size={17} /></button></form><button className="text-button signout-link" onClick={() => setShowSignOutConfirmation(true)}>Sign out instead</button></div>{showSignOutConfirmation && <ConfirmationDialog request={{ title: 'Sign out?', message: 'You’ll need to sign in again to continue setting up your account.', confirmLabel: 'Sign out', onConfirm: onSignOut }} onCancel={() => setShowSignOutConfirmation(false)} onConfirmed={() => setShowSignOutConfirmation(false)} />}{showPasswordConfirmation && <ConfirmationDialog request={{ title: 'Set your new password?', message: 'This replaces your temporary password. Your existing session will be renewed with the new credential.', confirmLabel: 'Save new password', onConfirm: changePassword }} onCancel={() => setShowPasswordConfirmation(false)} onConfirmed={() => setShowPasswordConfirmation(false)} />}</div>
 }
 
 function ConfirmationDialog({ request, onCancel, onConfirmed }: { request: ConfirmationRequest; onCancel: () => void; onConfirmed: () => void }) {
@@ -810,12 +808,12 @@ function OverviewPage({ dashboard, leads, events, users, currentUser, now, onOpe
   const pipelineData = stages.map((stage) => ({ ...stage, count: dashboard?.pipeline_counts[stage.value] ?? 0 }))
   const pipelineTotal = pipelineData.reduce((total, item) => total + item.count, 0)
   const chartColors: Record<LeadStatus, string> = {
-    new: '#93a2a4',
-    contacted: '#6a9dc1',
-    site_visit: '#8e83bc',
-    negotiation: '#d3a457',
-    won: '#68a17c',
-    lost: '#cb8379',
+    new: '#a4aaa4',
+    contacted: '#829b8a',
+    site_visit: '#b59a69',
+    negotiation: '#557b61',
+    won: '#2f7258',
+    lost: '#b77768',
   }
   const chartSegments = pipelineData
     .filter((item) => item.count > 0)
@@ -839,15 +837,15 @@ function OverviewPage({ dashboard, leads, events, users, currentUser, now, onOpe
   return (
     <div className="dashboard-grid">
       <section className="stat-grid">
-        <StatCard label="Total leads" value={dashboard?.total_leads ?? '—'} icon={<Users size={18} />} hint="Across your workspace" tone="blue" trend="All time" />
-        <StatCard label="Open follow-ups" value={dashboard?.open_tasks ?? '—'} icon={<CalendarDays size={18} />} hint="Keep the momentum" tone="violet" trend={`${dashboard?.due_today_count ?? 0} due today`} />
-        <StatCard label="Due today" value={dashboard?.due_today_count ?? '—'} icon={<Clock3 size={18} />} hint="A good day to reconnect" tone="amber" trend="Today's focus" />
-        <StatCard label="Overdue" value={dashboard?.overdue_count ?? '—'} icon={<CircleAlert size={18} />} hint="Bring these back on track" tone="rose" trend={dashboard?.overdue_count ? 'Needs attention' : 'All caught up'} />
+        <StatCard label="Total leads" value={dashboard?.total_leads ?? '—'} detail="In your pipeline" />
+        <StatCard label="Open follow-ups" value={dashboard?.open_tasks ?? '—'} detail={`${dashboard?.due_today_count ?? 0} due today`} />
+        <StatCard label="Due today" value={dashboard?.due_today_count ?? '—'} detail="Scheduled for today" />
+        <StatCard label="Overdue" value={dashboard?.overdue_count ?? '—'} detail={dashboard?.overdue_count ? 'Needs attention' : 'All caught up'} warning={Boolean(dashboard?.overdue_count)} />
       </section>
 
       <section className="panel pipeline-panel">
-        <div className="panel-header"><div><p className="eyebrow">YOUR SALES JOURNEY</p><h2>Pipeline at a glance</h2></div><button className="text-button" onClick={onOpenLeads}>View leads <ArrowUpRight size={15} /></button></div>
-        <div className="pipeline-summary"><strong>{dashboard?.total_leads ?? '—'}</strong><span>leads in your pipeline</span><span className="pipeline-legend"><i /> Active</span></div>
+        <div className="panel-header"><div><p className="eyebrow">Lead stages</p><h2>Pipeline at a glance</h2></div><button className="text-button" onClick={onOpenLeads}>View leads <ArrowUpRight size={15} /></button></div>
+        <div className="pipeline-summary"><strong>{dashboard?.total_leads ?? '—'}</strong><span>leads in your pipeline</span></div>
         <div className="pipeline-chart-layout">
           <div className="pipeline-chart" role="img" aria-label={`Lead pipeline chart: ${pipelineData.map((item) => `${item.label} ${item.count}`).join(', ')}`} style={{ background: pipelineChart }}>
             <div className="pipeline-chart-hole"><strong>{pipelineTotal}</strong><span>Total leads</span></div>
@@ -861,11 +859,11 @@ function OverviewPage({ dashboard, leads, events, users, currentUser, now, onOpe
             </div>)}
           </div>
         </div>
-        <div className="pipeline-footer"><span>Progress, not just numbers.</span><span className="pipeline-footer-icon"><ArrowUpRight size={15} /></span></div>
+        <div className="pipeline-footer"><span>Lead movement by stage</span></div>
       </section>
 
       <section className="panel followup-panel">
-        <div className="panel-header"><div><p className="eyebrow">DON’T LET A GOOD LEAD GO COLD</p><h2>Follow-ups to focus on</h2></div><button className="icon-button subtle-icon" aria-label="View all follow-ups" onClick={onOpenTasks}><ArrowUpRight size={17} /></button></div>
+        <div className="panel-header"><div><p className="eyebrow">Next steps</p><h2>Follow-ups to focus on</h2></div><button className="icon-button subtle-icon" aria-label="View all follow-ups" onClick={onOpenTasks}><ArrowUpRight size={17} /></button></div>
         <div className="followup-tabs"><span className="followup-tab active">Priority <b>{dueTasks.length}</b></span><button className="followup-tab" onClick={onOpenTasks}>All tasks <ChevronRight size={13} /></button></div>
         {dueTasks.length ? <div className="followup-list">{dueTasks.map((task) => {
           const lead = leads.find((item) => item.id === task.lead_id)
@@ -880,12 +878,12 @@ function OverviewPage({ dashboard, leads, events, users, currentUser, now, onOpe
       </section>
 
       <section className="panel leads-panel">
-        <div className="panel-header"><div><p className="eyebrow">FRESH OPPORTUNITIES</p><h2>Recently added leads</h2></div><button className="text-button" onClick={onOpenLeads}>All leads <ArrowUpRight size={15} /></button></div>
+        <div className="panel-header"><div><p className="eyebrow">New enquiries</p><h2>Recently added leads</h2></div><button className="text-button" onClick={onOpenLeads}>All leads <ArrowUpRight size={15} /></button></div>
         {recentLeads.length ? <div className="table-scroll"><table className="data-table compact-table"><thead><tr><th>Lead</th><th>Interest</th><th>Stage</th><th>Added</th></tr></thead><tbody>{recentLeads.map((lead) => <tr key={lead.id} onClick={() => onOpenLead(lead)}><td><div className="lead-cell"><div className={`avatar avatar-${avatarColor(lead.full_name)}`}>{initials(lead.full_name)}</div><span><strong>{lead.full_name}</strong><small>{lead.preferred_location || sourceLabels[lead.source]}</small></span></div></td><td>{lead.bhk ? `${lead.bhk} BHK` : '—'}<small className="table-subline">{budgetRange(lead)}</small></td><td><StatusPill status={lead.status} /></td><td className="muted-cell">{formatDate(lead.created_at)}</td></tr>)}</tbody></table></div> : <EmptyState title="No leads just yet" description="Add your first lead and start building your pipeline." />}
       </section>
 
       <section className="panel activity-panel">
-        <div className="panel-header"><div><p className="eyebrow">THE TEAM PULSE</p><h2>Recent activity</h2></div><button className="icon-button subtle-icon" aria-label="See all activity" onClick={onSeeAllActivity}><ArrowUpRight size={17} /></button></div>
+        <div className="panel-header"><div><p className="eyebrow">Workspace updates</p><h2>Recent activity</h2></div><button className="icon-button subtle-icon" aria-label="See all activity" onClick={onSeeAllActivity}><ArrowUpRight size={17} /></button></div>
         {events.length ? <ActivityList events={events.slice(0, 5)} onOpenEvent={onOpenEvent} /> : <EmptyState title="A fresh start" description="Team updates will appear here as work happens." />}
         <button className="panel-link" onClick={onSeeAllActivity}>View activity feed <ArrowUpRight size={14} /></button>
       </section>
@@ -893,8 +891,8 @@ function OverviewPage({ dashboard, leads, events, users, currentUser, now, onOpe
   )
 }
 
-function StatCard({ label, value, icon, hint, tone, trend }: { label: string; value: string | number; icon: React.ReactNode; hint: string; tone: string; trend: string }) {
-  return <div className="stat-card"><div className={`stat-icon stat-${tone}`}>{icon}</div><span className="stat-label">{label}</span><strong className="stat-value">{value}</strong><span className="stat-hint">{hint}</span><span className={`stat-trend trend-${tone}`}>{tone === 'rose' ? <ArrowDownRight size={13} /> : <ArrowUpRight size={13} />}{trend}</span></div>
+function StatCard({ label, value, detail, warning = false }: { label: string; value: string | number; detail: string; warning?: boolean }) {
+  return <div className={`stat-card ${warning ? 'stat-card-warning' : ''}`}><span className="stat-label">{label}</span><strong className="stat-value">{value}</strong><span className="stat-detail">{detail}</span></div>
 }
 
 function LeadsPage({ leads, query, setQuery, searchRef, statusFilter, setStatusFilter, onOpenLead, onUpdateStatus, onAddLead, onImportFile, onConfirmAction, importErrors, onDismissImportErrors, canImport, canWrite, loading }: {
@@ -925,7 +923,7 @@ function TasksPage({ tasks, filter, setFilter, users, currentUser, now, onComple
 }) {
   const filters = [{ id: 'all', label: 'All open' }, { id: 'today', label: 'Due today' }, { id: 'overdue', label: 'Overdue' }, { id: 'completed', label: 'Completed' }] as const
   return <section className="panel full-panel task-page-panel">
-    <div className="panel-header task-header"><div><p className="eyebrow">A LITTLE NUDGE GOES A LONG WAY</p><h2>{filter === 'completed' ? 'Completed follow-ups' : 'Your follow-up list'}</h2></div><div className="task-filter-pills">{filters.map((item) => <button key={item.id} className={`filter-pill ${filter === item.id ? 'filter-pill-active' : ''}`} onClick={() => setFilter(item.id)}>{item.label}</button>)}</div></div>
+    <div className="panel-header task-header"><div><p className="eyebrow">Follow-up schedule</p><h2>{filter === 'completed' ? 'Completed follow-ups' : 'Your follow-up list'}</h2></div><div className="task-filter-pills">{filters.map((item) => <button key={item.id} className={`filter-pill ${filter === item.id ? 'filter-pill-active' : ''}`} onClick={() => setFilter(item.id)}>{item.label}</button>)}</div></div>
     {tasks.length ? <div className="task-list">{tasks.map((task) => {
       const completed = task.status === 'completed'
       return <div className={`task-row ${completed ? 'task-row-completed' : ''}`} key={task.id}>
@@ -940,7 +938,7 @@ function TasksPage({ tasks, filter, setFilter, users, currentUser, now, onComple
 }
 
 function ActivityPage({ events, unreadCount, onMarkRead, onOpenEvent }: { events: AuditEvent[]; unreadCount: number; onMarkRead: () => void; onOpenEvent: (event: AuditEvent) => void }) {
-  return <section className="panel full-panel activity-page-panel"><div className="panel-header"><div><p className="eyebrow">SHARED WITH YOUR TEAM</p><h2>The activity feed</h2><p className="panel-subtitle">A clear view of the important changes happening across your workspace.</p></div>{unreadCount > 0 && <button className="button button-secondary" onClick={onMarkRead}><CheckCheck size={16} /> Mark as read</button>}</div>{events.length ? <ActivityList events={events} expanded onOpenEvent={onOpenEvent} /> : <EmptyState title="Nothing to report yet" description="Team changes and lead updates will show up here." />}<div className="activity-feed-note"><span className="secure-dot" /> This feed follows your team role and lead access.</div></section>
+  return <section className="panel full-panel activity-page-panel"><div className="panel-header"><div><p className="eyebrow">Shared with your team</p><h2>The activity feed</h2><p className="panel-subtitle">A clear view of the important changes happening across your workspace.</p></div>{unreadCount > 0 && <button className="button button-secondary" onClick={onMarkRead}><CheckCheck size={16} /> Mark as read</button>}</div>{events.length ? <ActivityList events={events} expanded onOpenEvent={onOpenEvent} /> : <EmptyState title="Nothing to report yet" description="Team changes and lead updates will show up here." />}<div className="activity-feed-note"><span className="secure-dot" /> This feed follows your team role and lead access.</div></section>
 }
 
 const auditFieldLabels: Record<string, string> = {
@@ -1005,9 +1003,9 @@ function ActivityList({ events, expanded = false, onOpenEvent }: { events: Audit
     const visibleChanges = taskTitleEntry ? changes.filter(([key]) => key !== 'task_title') : changes
     const detailText = visibleChanges.map(([key, value]) => formatAuditChange(key, value, event.entity_type)).join(' · ')
     const content = <>
-      <span className={`activity-avatar activity-${index % 4}`}>{event.actor_name ? initials(event.actor_name) : <Sparkles size={14} />}</span>
+      <span className={`activity-avatar activity-${index % 4}`}>{event.actor_name ? initials(event.actor_name) : <UserRound size={14} />}</span>
       <span className="activity-body">
-        <span className="activity-summary"><strong>{event.actor_name || 'UrbanNest team'}</strong> {event.summary.toLowerCase()}</span>
+        <span className="activity-summary"><strong>{event.actor_name || 'UrbanNest team'}</strong> {event.summary.replace(/^[A-Z]/, (letter) => letter.toLowerCase())}</span>
         {taskTitleEntry ? (
           <span className="activity-detail activity-task-detail" aria-label="What changed">
             <strong className="activity-task-title">{String(taskTitleEntry[1])}</strong>
@@ -1089,7 +1087,7 @@ function ProfilePage({ user, onChangePassword, onSaveProfile, onConfirmAction }:
   return <section className="profile-page-grid">
     <article className="panel profile-summary-card">
       <div className="profile-summary-avatar">{initials(user.full_name)}</div>
-      <div><p className="eyebrow">YOUR ACCOUNT</p><h2>{user.full_name}</h2></div>
+      <div><p className="eyebrow">Your account</p><h2>{user.full_name}</h2></div>
       <span className="role-pill">{user.role}</span>
       <dl className="profile-details">
         <div><dt>Email</dt><dd>{user.email}</dd></div>
@@ -1106,7 +1104,7 @@ function ProfilePage({ user, onChangePassword, onSaveProfile, onConfirmAction }:
       </form>
     </article>
     <article className="panel password-panel">
-      <div className="panel-header"><div><p className="eyebrow">SIGN-IN SECURITY</p><h2>Change your password</h2><p className="panel-subtitle">Use at least 12 characters. Your current session will be renewed securely.</p></div><KeyRound size={20} /></div>
+      <div className="panel-header"><div><p className="eyebrow">Sign-in security</p><h2>Change your password</h2><p className="panel-subtitle">Use at least 12 characters. Your current session will be renewed securely.</p></div><KeyRound size={20} /></div>
       <form className="account-form" onSubmit={(event) => void submit(event)}>
         <label>Current password<input type="password" autoComplete="current-password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} required /></label>
         <label>New password<input type="password" autoComplete="new-password" minLength={12} value={newPassword} onChange={(event) => setNewPassword(event.target.value)} required /></label>
@@ -1176,7 +1174,7 @@ function TeamPage({ currentUser, users, temporaryPassword, onClearTemporaryPassw
 
   return <section className="panel full-panel team-page-panel">
     <div className="panel-header team-header">
-      <div><p className="eyebrow">TEAM ACCESS</p><h2>People in your workspace</h2><p className="panel-subtitle">{ownerAccess ? 'Create accounts, adjust access, and help teammates get back in.' : 'Manage agent access and reset passwords for your team.'}</p></div>
+      <div><p className="eyebrow">Team access</p><h2>People in your workspace</h2><p className="panel-subtitle">{ownerAccess ? 'Create accounts, adjust access, and help teammates get back in.' : 'Manage agent access and reset passwords for your team.'}</p></div>
       <div className="team-header-actions">
         {ownerAccess && <button className="button button-danger" onClick={() => onConfirmAction({
           title: 'Reset every account password?',
@@ -1360,23 +1358,23 @@ function LeadDrawer({ lead: initialLead, token, onClose, onUpdated, onError, onC
     })
   }
 
-  return <><button className="drawer-backdrop" aria-label="Close lead details" onClick={onClose} /><aside className="lead-drawer"><div className="drawer-topbar"><span className="eyebrow">LEAD PROFILE</span><button className="icon-button" aria-label="Close lead details" onClick={onClose}><X size={19} /></button></div><div className="drawer-lead-head"><div className={`avatar avatar-large avatar-${avatarColor(lead.full_name)}`}>{initials(lead.full_name)}</div><div><h2>{lead.full_name}</h2><span className="drawer-subtitle">Added {formatDate(lead.created_at, { day: 'numeric', month: 'long', year: 'numeric' })}</span></div></div>
-    <div className="drawer-stage"><label htmlFor="drawer-status">CURRENT STAGE</label><select id="drawer-status" className={`status-select status-${stageFor(lead.status).tone}`} value={lead.status} disabled={!canWrite} onChange={(event) => void changeStage(event.target.value as LeadStatus)}>{stages.map((stage) => <option key={stage.value} value={stage.value}>{stage.label}</option>)}</select></div>
+  return <><button className="drawer-backdrop" aria-label="Close lead details" onClick={onClose} /><aside className="lead-drawer"><div className="drawer-topbar"><span className="eyebrow">Lead profile</span><button className="icon-button" aria-label="Close lead details" onClick={onClose}><X size={19} /></button></div><div className="drawer-lead-head"><div className={`avatar avatar-large avatar-${avatarColor(lead.full_name)}`}>{initials(lead.full_name)}</div><div><h2>{lead.full_name}</h2><span className="drawer-subtitle">Added {formatDate(lead.created_at, { day: 'numeric', month: 'long', year: 'numeric' })}</span></div></div>
+    <div className="drawer-stage"><label htmlFor="drawer-status">Current stage</label><select id="drawer-status" className={`status-select status-${stageFor(lead.status).tone}`} value={lead.status} disabled={!canWrite} onChange={(event) => void changeStage(event.target.value as LeadStatus)}>{stages.map((stage) => <option key={stage.value} value={stage.value}>{stage.label}</option>)}</select></div>
     {canWrite && <div className="drawer-actions"><button className="button button-secondary" onClick={() => setActiveForm(activeForm === 'activity' ? null : 'activity')}><ActivityIcon size={15} /> Log activity</button><button className="button button-secondary" onClick={() => setActiveForm(activeForm === 'task' ? null : 'task')}><CalendarDays size={15} /> Add follow-up</button></div>}
     {canWrite && activeForm === 'activity' && <form className="drawer-form" onSubmit={(event) => void submitActivity(event)}><div className="drawer-form-heading"><strong>Log an interaction</strong><button type="button" className="icon-button" aria-label="Close form" onClick={() => setActiveForm(null)}><X size={15} /></button></div><select value={activityType} onChange={(event) => setActivityType(event.target.value as Activity['type'])}><option value="call">Call</option><option value="note">Note</option><option value="site_visit">Site visit</option><option value="email">Email</option><option value="whatsapp">WhatsApp</option></select><textarea value={activityText} onChange={(event) => setActivityText(event.target.value)} placeholder="What happened? Add a useful note…" rows={3} required /><button className="button button-primary" disabled={saving}>{saving ? 'Saving…' : 'Save activity'}</button></form>}
     {canWrite && activeForm === 'task' && <form className="drawer-form" onSubmit={(event) => void submitTask(event)}><div className="drawer-form-heading"><strong>Plan a follow-up</strong><button type="button" className="icon-button" aria-label="Close form" onClick={() => setActiveForm(null)}><X size={15} /></button></div><input value={taskTitle} onChange={(event) => setTaskTitle(event.target.value)} placeholder="e.g. Call to confirm site visit" maxLength={200} required /><input type="datetime-local" value={taskDate} onChange={(event) => setTaskDate(event.target.value)} required /><button className="button button-primary" disabled={saving}>{saving ? 'Saving…' : 'Create follow-up'}</button></form>}
-    <div className="detail-section"><p className="eyebrow">WHAT THEY’RE LOOKING FOR</p><div className="detail-cards"><div className="detail-card"><span>Budget</span><strong>{budgetRange(lead)}</strong></div><div className="detail-card"><span>Configuration</span><strong>{lead.bhk ? `${lead.bhk} BHK` : 'Not specified'}</strong></div></div><div className="detail-location"><MapPin size={16} /><span>{lead.preferred_location || 'Preferred location not specified'}</span></div></div>
-    <div className="detail-section contact-section"><p className="eyebrow">CONTACT DETAILS</p>{lead.email && <a href={`mailto:${lead.email}`}><span className="contact-icon">@</span>{lead.email}<ArrowUpRight size={13} /></a>}{lead.phone && <a href={`tel:${lead.phone}`}><span className="contact-icon">#</span>{lead.phone}<ArrowUpRight size={13} /></a>}{!lead.email && !lead.phone && <span className="empty-contact">No contact details added.</span>}<div className="contact-source">Source <strong>{sourceLabels[lead.source]}</strong></div></div>
+    <div className="detail-section"><p className="eyebrow">Property preferences</p><div className="detail-cards"><div className="detail-card"><span>Budget</span><strong>{budgetRange(lead)}</strong></div><div className="detail-card"><span>Configuration</span><strong>{lead.bhk ? `${lead.bhk} BHK` : 'Not specified'}</strong></div></div><div className="detail-location"><MapPin size={16} /><span>{lead.preferred_location || 'Preferred location not specified'}</span></div></div>
+    <div className="detail-section contact-section"><p className="eyebrow">Contact details</p>{lead.email && <a href={`mailto:${lead.email}`}><span className="contact-icon">@</span>{lead.email}<ArrowUpRight size={13} /></a>}{lead.phone && <a href={`tel:${lead.phone}`}><span className="contact-icon">#</span>{lead.phone}<ArrowUpRight size={13} /></a>}{!lead.email && !lead.phone && <span className="empty-contact">No contact details added</span>}<div className="contact-source">Source <strong>{sourceLabels[lead.source]}</strong></div></div>
     <AICopilotPreview lead={lead} />
-    <div className="detail-section timeline-section"><div className="timeline-head"><div><p className="eyebrow">THE STORY SO FAR</p><h3>Timeline</h3></div><span className="timeline-count">{activities.length}</span></div>{activities.length ? <div className="timeline-list">{activities.map((activity) => <div className="timeline-item" key={activity.id}><span className="timeline-dot" /><div><strong>{activity.type.replaceAll('_', ' ')}</strong><p>{activity.body}</p><time>{relativeDate(activity.occurred_at)}</time></div></div>)}</div> : <p className="timeline-empty">No activity yet. Log a call or note to start the story.</p>}</div>
+    <div className="detail-section timeline-section"><div className="timeline-head"><div><p className="eyebrow">Lead history</p><h3>Timeline</h3></div><span className="timeline-count">{activities.length}</span></div>{activities.length ? <div className="timeline-list">{activities.map((activity) => <div className="timeline-item" key={activity.id}><span className="timeline-dot" /><div><strong>{activity.type.replaceAll('_', ' ')}</strong><p>{activity.body}</p><time>{relativeDate(activity.occurred_at)}</time></div></div>)}</div> : <p className="timeline-empty">No activity yet. Log a call or note to start the story.</p>}</div>
   </aside></>
 }
 
 function AICopilotPreview({ lead }: { lead: Lead }) {
   return <section className="detail-section ai-copilot-section" aria-labelledby="ai-copilot-title">
     <div className="ai-copilot-heading">
-      <div><p className="eyebrow">AI SALES COPILOT</p><h3 id="ai-copilot-title">AI tools</h3></div>
-      <span className="ai-preview-badge"><Sparkles size={12} /> Preview</span>
+      <div><p className="eyebrow">AI tools</p><h3 id="ai-copilot-title">Lead assistance</h3></div>
+      <span className="ai-preview-badge">Preview</span>
     </div>
     <p className="ai-preview-note">These controls are a UI preview. AI inference will be connected in a later phase.</p>
     <article className="ai-score-card">
@@ -1385,7 +1383,7 @@ function AICopilotPreview({ lead }: { lead: Lead }) {
       <button className="button button-secondary ai-disabled-action" type="button" disabled title="AI inference will be connected later">Score</button>
     </article>
     <details className="ai-feature-card">
-      <summary><Sparkles size={15} /><span><strong>Draft a follow-up</strong><small>Personalized WhatsApp or email message</small></span><span className="ai-feature-state">Later</span></summary>
+      <summary><span><strong>Draft a follow-up</strong><small>Personalized WhatsApp or email message</small></span><span className="ai-feature-state">Later</span></summary>
       <div className="ai-feature-content">
         <div className="ai-control-row">
           <label>Channel<select disabled defaultValue="whatsapp"><option value="whatsapp">WhatsApp</option><option value="email">Email</option></select></label>
@@ -1396,7 +1394,7 @@ function AICopilotPreview({ lead }: { lead: Lead }) {
       </div>
     </details>
     <details className="ai-feature-card">
-      <summary><Sparkles size={15} /><span><strong>Turn notes into CRM data</strong><small>Extract preferences and a suggested follow-up</small></span><span className="ai-feature-state">Later</span></summary>
+      <summary><span><strong>Turn notes into CRM data</strong><small>Extract preferences and a suggested follow-up</small></span><span className="ai-feature-state">Later</span></summary>
       <div className="ai-feature-content">
         <label className="ai-note-label">Lead notes<textarea readOnly rows={3} value={lead.notes ?? ''} placeholder="Add a note to this lead first." /></label>
         <div className="ai-extraction-preview"><span>Budget <strong>Not extracted</strong></span><span>Bedrooms <strong>Not extracted</strong></span><span>Location <strong>Not extracted</strong></span><span>Next follow-up <strong>Not extracted</strong></span></div>
@@ -1449,7 +1447,7 @@ function CreateLeadModal({ token, currentUser, onClose, onCreated, onError, onCo
 }
 
 function EmptyState({ title, description, action }: { title: string; description: string; action?: React.ReactNode }) {
-  return <div className="empty-state"><div className="empty-icon"><Sparkles size={19} /></div><strong>{title}</strong><p>{description}</p>{action}</div>
+  return <div className="empty-state"><strong>{title}</strong><p>{description}</p>{action}</div>
 }
 
 function StatusPill({ status }: { status: LeadStatus }) {

@@ -9,6 +9,7 @@ export interface WorkspaceState {
   auditEvents: AuditEvent[]
   unreadCount: number
   loading: boolean
+  hasLoaded: boolean
   error: string
   apiConnected: boolean
   importErrors: CSVImportResult['errors']
@@ -36,6 +37,7 @@ export const initialWorkspaceState: WorkspaceState = {
   auditEvents: [],
   unreadCount: 0,
   loading: false,
+  hasLoaded: false,
   error: '',
   apiConnected: false,
   importErrors: [],
@@ -56,6 +58,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         auditEvents: action.events,
         unreadCount: action.unreadCount,
         loading: false,
+        hasLoaded: true,
         apiConnected: true,
       }
     case 'refresh-failed':

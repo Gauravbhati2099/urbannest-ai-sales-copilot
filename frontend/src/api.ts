@@ -182,6 +182,31 @@ function formatApiDetail(detail: unknown, status: number): string {
   return `The server returned an unexpected error (${status}).`
 }
 
+export class ApiError extends Error {
+  readonly status: number | null
+
+  constructor(message: string, status: number | null) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+  }
+}
+
+async function responseError(response: Response): Promise<ApiError> {
+  let message = response.status >= 500
+    ? 'The service is temporarily unavailable. Please try again.'
+    : `Request failed (${response.status})`
+  if (response.status < 500) {
+    try {
+      const body: unknown = await response.json()
+      if (isRecord(body) && 'detail' in body) message = formatApiDetail(body.detail, response.status)
+    } catch {
+      // Some platform errors return an empty or non-JSON response.
+    }
+  }
+  return new ApiError(message, response.status)
+}
+
 export async function api<T>(path: string, token: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers)
   if (init.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) {
@@ -194,18 +219,11 @@ export async function api<T>(path: string, token: string, init: RequestInit = {}
     response = await fetch(`${API_PREFIX}${path}`, { ...init, headers })
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') throw error
-    throw new Error('Can’t reach the API. Check your connection and the API CORS settings.')
+    throw new ApiError('Can’t reach the API. Check your connection and the API CORS settings.', null)
   }
 
   if (!response.ok) {
-    let message = `Request failed (${response.status})`
-    try {
-      const body: unknown = await response.json()
-      if (isRecord(body) && 'detail' in body) message = formatApiDetail(body.detail, response.status)
-    } catch {
-      // Some platform errors return an empty or non-JSON response.
-    }
-    throw new Error(message)
+    throw await responseError(response)
   }
 
   if (response.status === 204) return undefined as T
@@ -226,19 +244,10 @@ export async function downloadAllPasswordResetCsv(token: string): Promise<Blob> 
     })
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') throw error
-    throw new Error('Can’t reach the API. Check your connection and the API CORS settings.')
+    throw new ApiError('Can’t reach the API. Check your connection and the API CORS settings.', null)
   }
 
-  if (!response.ok) {
-    let message = `Request failed (${response.status})`
-    try {
-      const body: unknown = await response.json()
-      if (isRecord(body) && 'detail' in body) message = formatApiDetail(body.detail, response.status)
-    } catch {
-      // Some platform errors return an empty or non-JSON response.
-    }
-    throw new Error(message)
-  }
+  if (!response.ok) throw await responseError(response)
 
   return response.blob()
 }

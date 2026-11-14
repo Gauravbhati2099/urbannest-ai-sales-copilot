@@ -35,6 +35,7 @@ class DemoUser:
     full_name: str
     role: UserRole
     phone: str
+    manager_email: str | None
 
 
 def _demo_user(
@@ -43,6 +44,7 @@ def _demo_user(
     full_name: str,
     role: UserRole,
     phone_number: int,
+    manager_local_email: str | None = None,
 ) -> DemoUser:
     return DemoUser(
         legacy_email=legacy_email,
@@ -50,6 +52,11 @@ def _demo_user(
         full_name=full_name,
         role=role,
         phone=f"{MOCK_PHONE_PREFIX}{phone_number:02d}",
+        manager_email=(
+            f"{manager_local_email}@{DEMO_EMAIL_DOMAIN}"
+            if manager_local_email
+            else None
+        ),
     )
 
 
@@ -81,6 +88,7 @@ DEMO_USERS = (
         "Ishaan Verma",
         UserRole.AGENT,
         4,
+        "rohan.desai",
     ),
     _demo_user(
         "agent02@demo.urbannest.example.invalid",
@@ -88,6 +96,7 @@ DEMO_USERS = (
         "Meera Nair",
         UserRole.AGENT,
         5,
+        "rohan.desai",
     ),
     _demo_user(
         "agent03@demo.urbannest.example.invalid",
@@ -95,6 +104,7 @@ DEMO_USERS = (
         "Aditi Shah",
         UserRole.AGENT,
         6,
+        "rohan.desai",
     ),
     _demo_user(
         "agent04@demo.urbannest.example.invalid",
@@ -102,6 +112,7 @@ DEMO_USERS = (
         "Kabir Joshi",
         UserRole.AGENT,
         7,
+        "rohan.desai",
     ),
     _demo_user(
         "agent05@demo.urbannest.example.invalid",
@@ -109,6 +120,7 @@ DEMO_USERS = (
         "Sana Khan",
         UserRole.AGENT,
         8,
+        "neha.kapoor",
     ),
     _demo_user(
         "agent06@demo.urbannest.example.invalid",
@@ -116,6 +128,7 @@ DEMO_USERS = (
         "Vivaan Iyer",
         UserRole.AGENT,
         9,
+        "neha.kapoor",
     ),
     _demo_user(
         "agent07@demo.urbannest.example.invalid",
@@ -123,6 +136,7 @@ DEMO_USERS = (
         "Tara Menon",
         UserRole.AGENT,
         10,
+        "neha.kapoor",
     ),
     _demo_user(
         "agent08@demo.urbannest.example.invalid",
@@ -130,6 +144,7 @@ DEMO_USERS = (
         "Dev Kulkarni",
         UserRole.AGENT,
         11,
+        "neha.kapoor",
     ),
     _demo_user(
         "agent09@demo.urbannest.example.invalid",
@@ -455,6 +470,19 @@ def seed_demo_data(session: Session) -> tuple[list[str], str | None]:
     session.flush()
     owner = users_by_email[DEMO_USERS[0].email]
     managers = [users_by_email[DEMO_USERS[index].email] for index in (1, 2)]
+    for demo_user in DEMO_USERS:
+        user = users_by_email[demo_user.email]
+        if demo_user.manager_email is None:
+            user.manager_id = None
+            continue
+        if demo_user.role is not UserRole.AGENT:
+            raise RuntimeError("Only demo agents can be assigned a demo manager")
+        manager = users_by_email.get(demo_user.manager_email)
+        if manager is None or manager.role is not UserRole.MANAGER:
+            raise RuntimeError(
+                f"Demo manager {demo_user.manager_email!r} is missing or has an unexpected role"
+            )
+        user.manager_id = manager.id
     agents = [
         users_by_email[demo_user.email]
         for demo_user in DEMO_USERS

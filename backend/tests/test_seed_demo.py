@@ -50,6 +50,15 @@ class DemoSeedTests(unittest.TestCase):
         self.assertEqual(sum(user.role is UserRole.OWNER for user in users), 1)
         self.assertEqual(sum(user.role is UserRole.MANAGER for user in users), 2)
         self.assertEqual(sum(user.role is UserRole.AGENT for user in users), 12)
+        users_by_email = {user.email: user for user in users}
+        assigned_agents = [user for user in DEMO_USERS if user.manager_email is not None]
+        self.assertEqual(len(assigned_agents), 8)
+        for demo_user in assigned_agents:
+            if demo_user.manager_email is None:
+                continue
+            user = users_by_email[demo_user.email]
+            manager = users_by_email[demo_user.manager_email]
+            self.assertEqual(user.manager_id, manager.id)
         self.assertTrue(
             all(
                 user.full_name != "Demo Owner"
@@ -89,12 +98,27 @@ class DemoSeedTests(unittest.TestCase):
             )
         )
 
+        for demo_user in assigned_agents:
+            users_by_email[demo_user.email].manager_id = None
+        self.session.flush()
         repeated_emails, repeated_password = seed_demo_data(self.session)
         self.session.commit()
 
         self.assertEqual(repeated_emails, [])
         self.assertIsNone(repeated_password)
         self.assertEqual(self.session.scalar(select(func.count()).select_from(User)), 15)
+        for demo_user in assigned_agents:
+            if demo_user.manager_email is None:
+                continue
+            user = self.session.scalar(
+                select(User).where(User.email == demo_user.email)
+            )
+            manager = self.session.scalar(
+                select(User).where(User.email == demo_user.manager_email)
+            )
+            self.assertIsNotNone(user)
+            self.assertIsNotNone(manager)
+            self.assertEqual(user.manager_id, manager.id)
         self.assertEqual(self.session.scalar(select(func.count()).select_from(Lead)), 50)
         self.assertEqual(self.session.scalar(select(func.count()).select_from(Activity)), 50)
         self.assertEqual(self.session.scalar(select(func.count()).select_from(Task)), 50)

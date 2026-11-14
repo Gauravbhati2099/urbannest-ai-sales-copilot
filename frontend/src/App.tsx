@@ -24,7 +24,6 @@ import {
   RotateCcw,
   RefreshCw,
   Search,
-  SlidersHorizontal,
   Sun,
   Upload,
   UserPlus,
@@ -33,6 +32,7 @@ import {
   X,
 } from 'lucide-react'
 import {
+  ApiError,
   api,
   downloadAllPasswordResetCsv,
   type Activity,
@@ -53,10 +53,64 @@ import {
   type UserUpdateRequest,
 } from './api'
 import { initialWorkspaceState, workspaceReducer } from './workspace-state'
+import { AppFailureScreen } from './ErrorScreens'
+import { CookieConsentBanner, PrivacyPolicyPage, StoragePreferencesPage, type LegalPageKind, type StorageConsent } from './PrivacyPages'
 import './App.css'
 
 type Page = 'overview' | 'leads' | 'tasks' | 'activity' | 'team' | 'profile'
 type Theme = 'light' | 'dark'
+type LeadSortKey = 'name' | 'contact' | 'requirement' | 'source' | 'stage' | 'added'
+type SortDirection = 'ascending' | 'descending'
+
+const STORAGE_CONSENT_KEY = 'urbannest_storage_consent'
+const THEME_COOKIE = 'urbannest_theme'
+const SIDEBAR_COOKIE = 'urbannest_sidebar_collapsed'
+const WORKSPACE_PAGE_KEY = 'urbannest_current_page'
+
+function readCookie(name: string) {
+  const prefix = `${name}=`
+  return document.cookie
+    .split(';')
+    .map((cookie) => cookie.trim())
+    .find((cookie) => cookie.startsWith(prefix))
+    ?.slice(prefix.length) ?? null
+}
+
+function writePreferenceCookie(name: string, value: string) {
+  const secure = window.location.protocol === 'https:' ? '; Secure' : ''
+  document.cookie = `${name}=${value}; Path=/; Max-Age=31536000; SameSite=Lax${secure}`
+}
+
+function clearPreferenceCookie(name: string) {
+  const secure = window.location.protocol === 'https:' ? '; Secure' : ''
+  document.cookie = `${name}=; Path=/; Max-Age=0; SameSite=Lax${secure}`
+}
+
+function readStorageConsent(): StorageConsent | null {
+  const consent = readCookie(STORAGE_CONSENT_KEY) ?? localStorage.getItem(STORAGE_CONSENT_KEY)
+  return consent === 'all' || consent === 'essential' ? consent : null
+}
+
+function readWorkspacePage(): Page {
+  const page = sessionStorage.getItem(WORKSPACE_PAGE_KEY)
+  switch (page) {
+    case 'overview':
+    case 'leads':
+    case 'tasks':
+    case 'activity':
+    case 'team':
+    case 'profile':
+      return page
+    default:
+      return 'overview'
+  }
+}
+
+function readLegalPage(): LegalPageKind | null {
+  if (window.location.hash === '#privacy-policy') return 'privacy'
+  if (window.location.hash === '#cookie-settings') return 'cookies'
+  return null
+}
 
 type ConfirmationRequest = {
   title: string
@@ -144,6 +198,23 @@ function stageFor(status: LeadStatus) {
   return stages.find((stage) => stage.value === status) ?? stages[0]
 }
 
+function compareLeads(left: Lead, right: Lead, sortKey: LeadSortKey) {
+  switch (sortKey) {
+    case 'name':
+      return left.full_name.localeCompare(right.full_name, undefined, { sensitivity: 'base' })
+    case 'contact':
+      return `${left.email ?? ''} ${left.phone ?? ''}`.localeCompare(`${right.email ?? ''} ${right.phone ?? ''}`, undefined, { sensitivity: 'base' })
+    case 'requirement':
+      return (left.bhk ?? 0) - (right.bhk ?? 0) || (left.budget_min_inr ?? 0) - (right.budget_min_inr ?? 0)
+    case 'source':
+      return sourceLabels[left.source].localeCompare(sourceLabels[right.source], undefined, { sensitivity: 'base' })
+    case 'stage':
+      return stages.findIndex((stage) => stage.value === left.status) - stages.findIndex((stage) => stage.value === right.status)
+    case 'added':
+      return Date.parse(left.created_at) - Date.parse(right.created_at)
+  }
+}
+
 function taskIsOverdue(dueAt: string, now: number) {
   return new Date(dueAt).getTime() < now
 }
@@ -155,15 +226,21 @@ function getErrorMessage(error: unknown) {
 function App() {
   const [token, setToken] = useState(() => sessionStorage.getItem('urbannest_token') ?? '')
   const [renderTime] = useState(() => new Date())
-  const [theme, setTheme] = useState<Theme>(() => localStorage.getItem('urbannest_theme') === 'dark' ? 'dark' : 'light')
+  const [storageConsent, setStorageConsent] = useState<StorageConsent | null>(readStorageConsent)
+  const [theme, setTheme] = useState<Theme>(() => storageConsent === 'all'
+    && (readCookie(THEME_COOKIE) ?? localStorage.getItem(THEME_COOKIE)) === 'dark' ? 'dark' : 'light')
   const leadSearchRef = useRef<HTMLInputElement>(null)
   const refreshControllerRef = useRef<AbortController | null>(null)
   const [user, setUser] = useState<User | null>(null)
   const [authReady, setAuthReady] = useState(() => !sessionStorage.getItem('urbannest_token'))
-  const [page, setPage] = useState<Page>('overview')
+  const [authError, setAuthError] = useState(false)
+  const [authRetryCount, setAuthRetryCount] = useState(0)
+  const [legalPage, setLegalPage] = useState<LegalPageKind | null>(readLegalPage)
+  const [page, setPage] = useState<Page>(readWorkspacePage)
   const [workspace, dispatch] = useReducer(workspaceReducer, initialWorkspaceState)
   const { dashboard, leads, tasks, completedTasks, teamUsers, auditEvents, unreadCount, loading, error, apiConnected, importErrors } = workspace
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('urbannest_sidebar_collapsed') === 'true')
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => storageConsent === 'all'
+    && (readCookie(SIDEBAR_COOKIE) ?? localStorage.getItem(SIDEBAR_COOKIE)) === 'true')
   const [query, setQuery] = useState('')
   const [debouncedQuery, setDebouncedQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
@@ -172,6 +249,7 @@ function App() {
   const [showCreateLead, setShowCreateLead] = useState(false)
   const [showNotifications, setShowNotifications] = useState(false)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
+  const [showUserMenu, setShowUserMenu] = useState(false)
   const [confirmation, setConfirmation] = useState<ConfirmationRequest | null>(null)
   const [notice, setNotice] = useState('')
   const [temporaryPassword, setTemporaryPassword] = useState<{ email: string; password: string } | null>(null)
@@ -179,15 +257,63 @@ function App() {
     dispatch(message ? { type: 'error-set', error: message } : { type: 'error-cleared' })
   }, [])
 
+  const openLegalPage = (nextPage: LegalPageKind) => {
+    window.location.hash = nextPage === 'privacy' ? 'privacy-policy' : 'cookie-settings'
+    setLegalPage(nextPage)
+  }
+
+  const closeLegalPage = () => {
+    window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`)
+    setLegalPage(null)
+  }
+
+  const chooseStorageConsent = (choice: StorageConsent) => {
+    writePreferenceCookie(STORAGE_CONSENT_KEY, choice)
+    localStorage.removeItem(STORAGE_CONSENT_KEY)
+    if (choice === 'essential') {
+      clearPreferenceCookie(THEME_COOKIE)
+      clearPreferenceCookie(SIDEBAR_COOKIE)
+      localStorage.removeItem(THEME_COOKIE)
+      localStorage.removeItem(SIDEBAR_COOKIE)
+    }
+    setStorageConsent(choice)
+  }
+
   useEffect(() => {
     document.documentElement.dataset.theme = theme
     document.documentElement.style.colorScheme = theme
-    localStorage.setItem('urbannest_theme', theme)
-  }, [theme])
+    if (storageConsent === 'all') writePreferenceCookie(THEME_COOKIE, theme)
+    localStorage.removeItem(THEME_COOKIE)
+  }, [storageConsent, theme])
 
   useEffect(() => {
-    localStorage.setItem('urbannest_sidebar_collapsed', String(sidebarCollapsed))
-  }, [sidebarCollapsed])
+    if (storageConsent === 'all') writePreferenceCookie(SIDEBAR_COOKIE, String(sidebarCollapsed))
+    localStorage.removeItem(SIDEBAR_COOKIE)
+  }, [sidebarCollapsed, storageConsent])
+
+  useEffect(() => {
+    if (storageConsent !== null) writePreferenceCookie(STORAGE_CONSENT_KEY, storageConsent)
+    localStorage.removeItem(STORAGE_CONSENT_KEY)
+  }, [storageConsent])
+
+  useEffect(() => {
+    if (token && user) sessionStorage.setItem(WORKSPACE_PAGE_KEY, page)
+  }, [page, token, user])
+
+  useEffect(() => {
+    if (!showUserMenu) return
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setShowUserMenu(false)
+    }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [showUserMenu])
+
+  useEffect(() => {
+    const syncLegalPage = () => setLegalPage(readLegalPage())
+    window.addEventListener('hashchange', syncLegalPage)
+    return () => window.removeEventListener('hashchange', syncLegalPage)
+  }, [])
 
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedQuery(query.trim()), 250)
@@ -222,6 +348,7 @@ function App() {
     sessionStorage.setItem('urbannest_token', response.access_token)
     setToken(response.access_token)
     setUser(response.user)
+    setAuthError(false)
   }, [])
 
   const signOut = useCallback(() => {
@@ -230,8 +357,10 @@ function App() {
     setUser(null)
     setTemporaryPassword(null)
     setAuthReady(true)
+    setAuthError(false)
     refreshControllerRef.current?.abort()
     dispatch({ type: 'session-cleared' })
+    sessionStorage.removeItem(WORKSPACE_PAGE_KEY)
     setPage('overview')
   }, [])
 
@@ -242,10 +371,19 @@ function App() {
     let active = true
     api<User>('/auth/me', token)
       .then((currentUser) => {
-        if (active) setUser(currentUser)
+        if (active) {
+          setUser(currentUser)
+          setAuthError(false)
+        }
       })
-      .catch(() => {
-        if (active) signOut()
+      .catch((requestError: unknown) => {
+        if (!active) return
+        if (requestError instanceof ApiError && requestError.status === 401) {
+          signOut()
+          return
+        }
+        console.error('Could not restore the UrbanNest session', requestError)
+        setAuthError(true)
       })
       .finally(() => {
         if (active) setAuthReady(true)
@@ -253,7 +391,7 @@ function App() {
     return () => {
       active = false
     }
-  }, [signOut, token])
+  }, [authRetryCount, signOut, token])
 
   const canReadWorkspace = !user
     || user.is_superuser
@@ -323,11 +461,16 @@ function App() {
       })
     } catch (requestError) {
       if (requestError instanceof DOMException && requestError.name === 'AbortError') return
+      if (requestError instanceof ApiError && requestError.status === 401) {
+        signOut()
+        return
+      }
+      console.error('Could not refresh the UrbanNest workspace', requestError)
       dispatch({ type: 'refresh-failed', error: getErrorMessage(requestError) })
     } finally {
       if (refreshControllerRef.current === controller) refreshControllerRef.current = null
     }
-  }, [canManageTeam, canReadWorkspace, debouncedQuery, statusFilter, token])
+  }, [canManageTeam, canReadWorkspace, debouncedQuery, signOut, statusFilter, token])
 
   useEffect(() => {
     // eslint-disable-next-line react/set-state-in-effect -- Synchronizes server data with auth and search filters.
@@ -542,29 +685,60 @@ function App() {
     setError('')
   }
 
+  const retryAuthentication = () => {
+    setAuthError(false)
+    setAuthReady(false)
+    setAuthRetryCount((count) => count + 1)
+  }
+
+  if (legalPage === 'privacy') {
+    return <>
+      <PrivacyPolicyPage onBack={closeLegalPage} onOpenCookies={() => openLegalPage('cookies')} />
+      <CookieConsentBanner consent={storageConsent} onChoose={chooseStorageConsent} onManage={() => openLegalPage('cookies')} />
+    </>
+  }
+
   if (!authReady) {
     return <div className="boot-screen"><span className="brand-mark">U</span><span className="spinner" /></div>
   }
 
+  if (legalPage === 'cookies') {
+    return <StoragePreferencesPage consent={storageConsent} onBack={closeLegalPage} onChoose={chooseStorageConsent} />
+  }
+
+  if (authError) {
+    return <>
+      <AppFailureScreen kind="server" fullScreen onRetry={retryAuthentication} />
+      <CookieConsentBanner consent={storageConsent} onChoose={chooseStorageConsent} onManage={() => openLegalPage('cookies')} />
+    </>
+  }
+
   if (!token || !user) {
-    return <LoginScreen onLogin={handleLogin} error={error} setError={setError} theme={theme} onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')} />
+    return <>
+      <LoginScreen onLogin={handleLogin} error={error} setError={setError} theme={theme} onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')} onOpenPrivacy={() => openLegalPage('privacy')} onOpenCookieSettings={() => openLegalPage('cookies')} />
+      <CookieConsentBanner consent={storageConsent} onChoose={chooseStorageConsent} onManage={() => openLegalPage('cookies')} />
+    </>
   }
 
   if (user.must_change_password) {
-    return <PasswordScreen token={token} onComplete={setSession} onSignOut={signOut} theme={theme} onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')} />
+    return <>
+      <PasswordScreen token={token} onComplete={setSession} onSignOut={signOut} theme={theme} onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')} />
+      <CookieConsentBanner consent={storageConsent} onChoose={chooseStorageConsent} onManage={() => openLegalPage('cookies')} />
+    </>
   }
 
+  const sidebarIsCollapsed = sidebarCollapsed && !mobileNavOpen
+
   return (
-    <div className={`app-shell ${sidebarCollapsed ? 'app-shell-collapsed' : ''}`}>
+    <div className={`app-shell ${sidebarIsCollapsed ? 'app-shell-collapsed' : ''}`}>
       {mobileNavOpen && <button className="mobile-backdrop" aria-label="Close menu" onClick={() => setMobileNavOpen(false)} />}
-      <aside className={`sidebar ${sidebarCollapsed ? 'sidebar-collapsed' : ''} ${mobileNavOpen ? 'sidebar-open' : ''}`}>
+      <aside className={`sidebar ${sidebarIsCollapsed ? 'sidebar-collapsed' : ''} ${mobileNavOpen ? 'sidebar-open' : ''}`}>
         <a className="brand" href="#" onClick={(event) => { event.preventDefault(); setPage('overview') }}>
           <span className="brand-mark">U</span>
           <span className="brand-copy"><strong>urbannest</strong><small>Realty CRM</small></span>
         </a>
-        <button className="sidebar-toggle icon-button" aria-label={sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation'} title={sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation'} onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}>
-          {sidebarCollapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
-        </button>
+        {mobileNavOpen && <button className="mobile-sidebar-close icon-button" aria-label="Close navigation" title="Close navigation" onClick={() => { setMobileNavOpen(false); setShowUserMenu(false) }}><X size={18} /></button>}
+        {canReadWorkspace && canWriteWorkspace && <button className="sidebar-create-button" aria-label="Add lead" title="Add lead" onClick={() => { setShowCreateLead(true); setMobileNavOpen(false) }}><Plus size={18} /><span>Add lead</span></button>}
 
         <div className="nav-caption">Workspace</div>
         <nav className="primary-nav" aria-label="Main navigation">
@@ -578,25 +752,35 @@ function App() {
         </nav>
 
         <div className="sidebar-bottom">
-          <button className={`user-profile ${activePage === 'profile' ? 'user-profile-active' : ''}`} onClick={() => { setPage('profile'); setMobileNavOpen(false) }} title="Open your profile">
+          <button className={`user-profile ${activePage === 'profile' ? 'user-profile-active' : ''}`} aria-haspopup="menu" aria-expanded={showUserMenu} aria-controls="sidebar-user-menu" onClick={() => setShowUserMenu((open) => !open)} title="Open account menu">
             <span className="avatar avatar-user">{initials(user.full_name)}</span>
             <span className="user-meta"><strong>{user.full_name}</strong><span>{user.role}</span></span>
-            <UserRound className="profile-indicator" size={16} />
+            <ChevronDown className="profile-indicator" size={16} />
           </button>
-          <button className="sign-out-button" onClick={() => setConfirmation({
+        </div>
+      </aside>
+
+      {!mobileNavOpen && <button className={`sidebar-toggle ${sidebarIsCollapsed ? 'sidebar-toggle-collapsed' : ''}`} aria-label={sidebarIsCollapsed ? 'Expand navigation' : 'Collapse navigation'} title={sidebarIsCollapsed ? 'Expand navigation' : 'Collapse navigation'} onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}>
+        {sidebarIsCollapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
+      </button>}
+      {showUserMenu && <>
+        <button className="profile-menu-backdrop" tabIndex={-1} aria-label="Close account menu" onClick={() => setShowUserMenu(false)} />
+        <div className="profile-menu" id="sidebar-user-menu" role="menu" aria-label="Account menu">
+          <button className="profile-menu-item" role="menuitem" onClick={() => { setPage('profile'); setMobileNavOpen(false); setShowUserMenu(false) }}><UserRound size={16} /><span>Profile</span></button>
+          <button className="profile-menu-item" role="menuitem" onClick={() => { setShowUserMenu(false); setMobileNavOpen(false); setConfirmation({
             title: 'Sign out?',
             message: 'You’ll need to sign in again to continue working in UrbanNest Realty.',
             confirmLabel: 'Sign out',
             onConfirm: signOut,
-          })}><LogOut size={16} /><span>Sign out</span></button>
+          }) }}><LogOut size={16} /><span>Sign out</span></button>
         </div>
-      </aside>
+      </>}
 
       <main className="main-panel">
         <header className="topbar">
           <button className="icon-button mobile-menu" aria-label="Open menu" onClick={() => setMobileNavOpen(true)}><Menu size={20} /></button>
           <div className="topbar-actions">
-            <div className={`api-indicator ${apiConnected ? '' : 'api-offline'}`}><span className="status-light" /> {apiConnected ? 'API connected' : 'API not checked'}</div>
+            <div className={`api-indicator ${apiConnected ? '' : 'api-offline'}`}><span className="status-light" /> {apiConnected ? 'API connected' : error ? 'API unavailable' : 'API not checked'}</div>
             <ThemeButton theme={theme} onToggle={() => setTheme(theme === 'dark' ? 'light' : 'dark')} />
             {canReadWorkspace && <button className="icon-button notification-button" aria-label="Notifications" onClick={() => setShowNotifications((show) => !show)}>
               <Bell size={19} />{unreadCount > 0 && <span className="notification-badge">{unreadCount > 9 ? '9+' : unreadCount}</span>}
@@ -605,7 +789,7 @@ function App() {
         </header>
 
         <div className="page-content">
-          {(error || notice) && (
+          {(notice || (error && workspace.hasLoaded)) && (
             <div className={`toast ${error ? 'toast-error' : 'toast-success'}`} role="status">
               {error ? <CircleAlert size={17} /> : <Check size={17} />}
               <span>{error || notice}</span>
@@ -625,7 +809,11 @@ function App() {
             </div>
           </div>
 
-          {loading && !dashboard && canReadWorkspace ? <LoadingState /> : (
+          {!workspace.hasLoaded
+            ? loading || !error
+              ? <LoadingState />
+              : <AppFailureScreen kind="server" onRetry={() => void refresh()} />
+            : (
             <>
               {!canReadWorkspace && activePage !== 'team' && activePage !== 'profile' && (
                 <EmptyState title="Workspace access is disabled" description="Your current role does not have permission to read CRM records." />
@@ -645,12 +833,20 @@ function App() {
             </>
           )}
         </div>
+        <footer className="app-legal-footer">
+          <span>UrbanNest Realty CRM</span>
+          <div>
+            <button onClick={() => openLegalPage('privacy')}>Privacy policy</button>
+            <button onClick={() => openLegalPage('cookies')}>Cookie and storage choices</button>
+          </div>
+        </footer>
       </main>
 
       {showNotifications && canReadWorkspace && <NotificationPanel events={auditEvents.slice(0, 5)} unreadCount={unreadCount} onClose={() => setShowNotifications(false)} onOpenEvent={(event) => void openAuditEvent(event)} onOpenActivity={() => { setPage('activity'); setShowNotifications(false) }} />}
       {confirmation && <ConfirmationDialog request={confirmation} onCancel={() => setConfirmation(null)} onConfirmed={() => setConfirmation(null)} />}
       {selectedLead && canReadWorkspace && <LeadDrawer lead={selectedLead} token={token} onClose={() => setSelectedLead(null)} onUpdated={(updated) => { setSelectedLead(updated); void refresh() }} onError={setError} onConfirmAction={setConfirmation} canWrite={canWriteWorkspace} />}
       {showCreateLead && canWriteWorkspace && <CreateLeadModal token={token} currentUser={user} onClose={() => setShowCreateLead(false)} onConfirmAction={setConfirmation} onCreated={async (lead) => { setShowCreateLead(false); setNotice(`Added ${lead.full_name} to your leads.`); setPage('leads'); await refresh(); setSelectedLead(lead) }} onError={setError} />}
+      <CookieConsentBanner consent={storageConsent} onChoose={chooseStorageConsent} onManage={() => openLegalPage('cookies')} />
     </div>
   )
 }
@@ -667,10 +863,150 @@ function NavButton({ icon, active, onClick, children, label }: { icon: React.Rea
 }
 
 function LoadingState() {
-  return <div className="loading-state"><span className="spinner" /><p>Getting your workspace ready…</p></div>
+  return (
+    <div className="loading-state workspace-skeleton dashboard-grid" role="status" aria-label="Loading your workspace">
+      <section className="stat-grid" aria-hidden="true">
+        {Array.from({ length: 4 }, (_, index) => (
+          <div className="stat-card skeleton-stat-card" key={index}>
+            <span className="skeleton-block skeleton-stat-label" />
+            <span className="skeleton-block skeleton-stat-value" />
+            <span className="skeleton-block skeleton-stat-detail" />
+          </div>
+        ))}
+      </section>
+
+      <section className="panel pipeline-panel skeleton-panel" aria-hidden="true">
+        <div className="panel-header">
+          <div>
+            <p className="eyebrow"><span className="skeleton-block skeleton-eyebrow" /></p>
+            <h2><span className="skeleton-block skeleton-panel-title" /></h2>
+          </div>
+          <span className="skeleton-block skeleton-header-action" />
+        </div>
+        <div className="pipeline-summary">
+          <strong><span className="skeleton-block skeleton-pipeline-total" /></strong>
+          <span><span className="skeleton-block skeleton-summary-copy" /></span>
+        </div>
+        <div className="pipeline-chart-layout">
+          <div className="pipeline-chart skeleton-block skeleton-pipeline-chart" />
+          <div className="pipeline-legend-grid">
+            {Array.from({ length: 6 }, (_, index) => (
+              <div className="pipeline-legend-item" key={index}>
+                <span className="stage-dot skeleton-block skeleton-stage-dot" />
+                <span className="skeleton-block skeleton-stage-label" />
+                <span className="skeleton-block skeleton-stage-value" />
+                <small className="skeleton-block skeleton-stage-percent" />
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="pipeline-footer"><span className="skeleton-block skeleton-footer-label" /></div>
+      </section>
+
+      <section className="panel followup-panel skeleton-panel" aria-hidden="true">
+        <div className="panel-header">
+          <div>
+            <p className="eyebrow"><span className="skeleton-block skeleton-eyebrow" /></p>
+            <h2><span className="skeleton-block skeleton-panel-title skeleton-followup-title" /></h2>
+          </div>
+          <span className="skeleton-block skeleton-header-icon" />
+        </div>
+        <div className="followup-tabs">
+          <span className="followup-tab active"><span className="skeleton-block skeleton-tab-label" /><b><span className="skeleton-block skeleton-tab-count" /></b></span>
+          <span className="followup-tab"><span className="skeleton-block skeleton-tab-label skeleton-all-tasks" /></span>
+        </div>
+        <div className="followup-list">
+          {Array.from({ length: 4 }, (_, index) => (
+            <div className="followup-item" key={index}>
+              <span className="task-check skeleton-block skeleton-task-check" />
+              <span className="followup-copy">
+                <span className="skeleton-block skeleton-task-title" />
+                <span className="skeleton-block skeleton-task-lead" />
+              </span>
+              <span className="task-assignee">
+                <span className="avatar avatar-xs skeleton-block skeleton-assignee-avatar" />
+                <span className="skeleton-block skeleton-assignee-name" />
+              </span>
+              <span className="task-time"><span className="skeleton-block skeleton-task-time" /></span>
+            </div>
+          ))}
+        </div>
+        <div className="panel-link"><span className="skeleton-block skeleton-panel-link" /></div>
+      </section>
+
+      <section className="panel leads-panel skeleton-panel" aria-hidden="true">
+        <div className="panel-header">
+          <div>
+            <p className="eyebrow"><span className="skeleton-block skeleton-eyebrow" /></p>
+            <h2><span className="skeleton-block skeleton-panel-title" /></h2>
+          </div>
+          <span className="skeleton-block skeleton-header-action" />
+        </div>
+        <div className="table-scroll">
+          <table className="data-table compact-table skeleton-leads-table">
+            <colgroup><col /><col /><col /><col /></colgroup>
+            <thead>
+              <tr>
+                <th><span className="skeleton-block skeleton-table-heading skeleton-lead-heading" /></th>
+                <th><span className="skeleton-block skeleton-table-heading skeleton-interest-heading" /></th>
+                <th><span className="skeleton-block skeleton-table-heading skeleton-stage-heading" /></th>
+                <th><span className="skeleton-block skeleton-table-heading skeleton-added-heading" /></th>
+              </tr>
+            </thead>
+            <tbody>
+              {Array.from({ length: 5 }, (_, index) => (
+                <tr key={index}>
+                  <td>
+                    <div className="lead-cell">
+                      <span className="avatar skeleton-block skeleton-lead-avatar" />
+                      <span>
+                        <span className="skeleton-block skeleton-lead-name" />
+                        <span className="skeleton-block skeleton-lead-location" />
+                      </span>
+                    </div>
+                  </td>
+                  <td>
+                    <span className="skeleton-block skeleton-interest-main" />
+                    <span className="skeleton-block skeleton-interest-sub" />
+                  </td>
+                  <td><span className="skeleton-block skeleton-status" /></td>
+                  <td><span className="skeleton-block skeleton-added-date" /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="panel activity-panel skeleton-panel" aria-hidden="true">
+        <div className="panel-header">
+          <div>
+            <p className="eyebrow"><span className="skeleton-block skeleton-eyebrow" /></p>
+            <h2><span className="skeleton-block skeleton-panel-title" /></h2>
+          </div>
+          <span className="skeleton-block skeleton-header-icon" />
+        </div>
+        <div className="activity-list">
+          {Array.from({ length: 5 }, (_, index) => (
+            <div className="activity-item" key={index}>
+              <span className="activity-avatar skeleton-block skeleton-activity-avatar" />
+              <span className="activity-body">
+                <span className="activity-summary"><span className="skeleton-block skeleton-activity-summary" /></span>
+                {index % 2 === 0 && <span className="activity-detail"><span className="skeleton-block skeleton-activity-detail" /></span>}
+                <time><span className="skeleton-block skeleton-activity-time" /></time>
+                <span className="activity-open-link"><span className="skeleton-block skeleton-activity-link" /></span>
+              </span>
+              <span className="activity-read-dot skeleton-block skeleton-activity-dot" />
+            </div>
+          ))}
+        </div>
+        <div className="panel-link"><span className="skeleton-block skeleton-panel-link" /></div>
+      </section>
+    </div>
+  )
 }
 
-function LoginScreen({ onLogin, error, setError, theme, onToggleTheme }: { onLogin: (response: LoginResponse) => void; error: string; setError: (message: string) => void; theme: Theme; onToggleTheme: () => void }) {
+function LoginScreen({ onLogin, error, setError, theme, onToggleTheme, onOpenPrivacy, onOpenCookieSettings }: { onLogin: (response: LoginResponse) => void; error: string; setError: (message: string) => void; theme: Theme; onToggleTheme: () => void; onOpenPrivacy: () => void; onOpenCookieSettings: () => void }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
@@ -729,7 +1065,14 @@ function LoginScreen({ onLogin, error, setError, theme, onToggleTheme }: { onLog
           </form>
           {!forgotPassword && <div className="auth-note"><span className="secure-dot" /> Your workspace is private and secure.</div>}
         </div>
-        <div className="auth-footer"><span>© {CURRENT_YEAR} UrbanNest Realty</span><span>Questions? Ask your team owner.</span></div>
+        <div className="auth-footer">
+          <span>© {CURRENT_YEAR} UrbanNest Realty</span>
+          <span>Questions? Ask your team owner.</span>
+          <div className="auth-legal-links">
+            <button onClick={onOpenPrivacy}>Privacy</button>
+            <button onClick={onOpenCookieSettings}>Storage choices</button>
+          </div>
+        </div>
       </div>
     </div>
   )
@@ -895,6 +1238,26 @@ function StatCard({ label, value, detail, warning = false }: { label: string; va
   return <div className={`stat-card ${warning ? 'stat-card-warning' : ''}`}><span className="stat-label">{label}</span><strong className="stat-value">{value}</strong><span className="stat-detail">{detail}</span></div>
 }
 
+function SortableHeader({ label, sortKey, activeSort, direction, onSort, filter }: {
+  label: string
+  sortKey: LeadSortKey
+  activeSort: LeadSortKey
+  direction: SortDirection
+  onSort: (sortKey: LeadSortKey) => void
+  filter?: React.ReactNode
+}) {
+  const active = sortKey === activeSort
+  const nextDirection = active && direction === 'ascending' ? 'descending' : 'ascending'
+  return <th aria-sort={active ? direction : 'none'}>
+    <div className="table-header-cell">
+      <button type="button" className="table-sort-button" aria-label={`Sort by ${label}, ${nextDirection}`} onClick={() => onSort(sortKey)}>
+        <span>{label}</span><span className="table-sort-indicator" aria-hidden="true">{active ? direction === 'ascending' ? '↑' : '↓' : '↕'}</span>
+      </button>
+      {filter && <div className="table-header-filter-wrap">{filter}</div>}
+    </div>
+  </th>
+}
+
 function LeadsPage({ leads, query, setQuery, searchRef, statusFilter, setStatusFilter, onOpenLead, onUpdateStatus, onAddLead, onImportFile, onConfirmAction, importErrors, onDismissImportErrors, canImport, canWrite, loading }: {
   leads: Lead[]; query: string; setQuery: (value: string) => void; statusFilter: string
   searchRef: React.RefObject<HTMLInputElement | null>
@@ -904,13 +1267,60 @@ function LeadsPage({ leads, query, setQuery, searchRef, statusFilter, setStatusF
   importErrors: CSVImportResult['errors']
   onDismissImportErrors: () => void; canImport: boolean; canWrite: boolean; loading: boolean
 }) {
+  const [sourceFilter, setSourceFilter] = useState<LeadSource | ''>('')
+  const [locationFilter, setLocationFilter] = useState('')
+  const [bedroomFilter, setBedroomFilter] = useState('')
+  const [sortKey, setSortKey] = useState<LeadSortKey>('added')
+  const [sortDirection, setSortDirection] = useState<SortDirection>('descending')
+  const locationOptions = useMemo(() => [...new Set(leads
+    .map((lead) => lead.preferred_location?.trim())
+    .filter((location): location is string => Boolean(location)))].sort((a, b) => a.localeCompare(b)), [leads])
+  const bedroomOptions = useMemo(() => [...new Set(leads
+    .map((lead) => lead.bhk)
+    .filter((bedrooms): bedrooms is number => bedrooms !== null && bedrooms !== undefined))]
+    .sort((a, b) => a - b), [leads])
+  const visibleLeads = useMemo(() => leads
+    .filter((lead) => (!sourceFilter || lead.source === sourceFilter)
+      && (!locationFilter || lead.preferred_location?.trim() === locationFilter)
+      && (!bedroomFilter || String(lead.bhk ?? '') === bedroomFilter))
+    .sort((left, right) => {
+      const compared = compareLeads(left, right, sortKey)
+      return sortDirection === 'ascending' ? compared : -compared
+    }), [bedroomFilter, leads, locationFilter, sortDirection, sortKey, sourceFilter])
+  const hasActiveFilters = Boolean(query || statusFilter || sourceFilter || locationFilter || bedroomFilter)
+
+  const changeSort = (nextSortKey: LeadSortKey) => {
+    if (nextSortKey === sortKey) {
+      setSortDirection((current) => current === 'ascending' ? 'descending' : 'ascending')
+      return
+    }
+    setSortKey(nextSortKey)
+    setSortDirection(nextSortKey === 'added' ? 'descending' : 'ascending')
+  }
+
+  const clearFilters = () => {
+    setQuery('')
+    setStatusFilter('')
+    setSourceFilter('')
+    setLocationFilter('')
+    setBedroomFilter('')
+  }
+
   return <section className="panel full-panel leads-page-panel">
-    <div className="list-toolbar"><div className="search-box"><Search size={17} /><input ref={searchRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search leads, locations…" aria-label="Search leads" /><kbd className="search-shortcut">/</kbd>{query && <button className="icon-button clear-search" aria-label="Clear search" onClick={() => setQuery('')}><X size={14} /></button>}</div><label className="select-wrap"><SlidersHorizontal size={15} /><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} aria-label="Filter by stage"><option value="">All stages</option>{stages.map((stage) => <option key={stage.value} value={stage.value}>{stage.label}</option>)}</select><ChevronDown size={14} /></label><span className="result-count">{leads.length} leads</span>{canImport && <label className="button button-secondary import-button"><Upload size={15} /> Import CSV<input type="file" accept=".csv,text/csv" onChange={(event) => { const file = event.target.files?.[0]; if (file) onConfirmAction({ title: 'Import leads from CSV?', message: `This will add leads from “${file.name}” to the workspace. Rows that cannot be imported will be reported for review.`, confirmLabel: 'Import leads', onConfirm: () => onImportFile(file) }); event.currentTarget.value = '' }} /></label>}</div>
+    <div className="list-toolbar"><div className="search-box"><Search size={17} /><input ref={searchRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search leads, locations…" aria-label="Search leads" /><kbd className="search-shortcut">/</kbd>{query && <button className="icon-button clear-search" aria-label="Clear search" onClick={() => setQuery('')}><X size={14} /></button>}</div><span className="result-count">Showing {visibleLeads.length} of {leads.length}</span>{hasActiveFilters && <button className="text-button clear-filters" onClick={clearFilters}>Clear filters</button>}{canImport && <label className="button button-secondary import-button"><Upload size={15} /> Import CSV<input type="file" accept=".csv,text/csv" onChange={(event) => { const file = event.target.files?.[0]; if (file) onConfirmAction({ title: 'Import leads from CSV?', message: `This will add leads from “${file.name}” to the workspace. Rows that cannot be imported will be reported for review.`, confirmLabel: 'Import leads', onConfirm: () => onImportFile(file) }); event.currentTarget.value = '' }} /></label>}</div>
     {importErrors.length > 0 && <div className="csv-errors"><div><strong>Some rows weren’t imported</strong><span>Review the row numbers and fix the source CSV before retrying.</span></div><button className="icon-button" aria-label="Dismiss import errors" onClick={onDismissImportErrors}><X size={16} /></button><ul>{importErrors.slice(0, 8).map((item) => <li key={`${item.row}-${item.message}`}><strong>Row {item.row}</strong>{item.message}</li>)}</ul>{importErrors.length > 8 && <small>And {importErrors.length - 8} more row errors.</small>}</div>}
-    <div className="table-scroll"><table className="data-table leads-table"><thead><tr><th>Lead</th><th>Contact</th><th>Requirement</th><th>Source</th><th>Stage</th><th>Added</th><th aria-label="Open" /></tr></thead><tbody>{leads.map((lead) => <tr key={lead.id}><td><button className="lead-cell lead-cell-button" onClick={() => onOpenLead(lead)}><div className={`avatar avatar-${avatarColor(lead.full_name)}`}>{initials(lead.full_name)}</div><span><strong>{lead.full_name}</strong><small>{lead.preferred_location || 'Location not set'}</small></span></button></td><td><span>{lead.email || '—'}</span><small className="table-subline">{lead.phone || 'No phone'}</small></td><td><strong className="requirement-main">{lead.bhk ? `${lead.bhk} BHK` : 'Home search'}</strong><small className="table-subline">{budgetRange(lead)}</small></td><td><span className="source-label">{sourceLabels[lead.source]}</span></td><td><select className={`status-select status-${stageFor(lead.status).tone}`} aria-label={`Change ${lead.full_name} stage`} value={lead.status} disabled={!canWrite} onChange={(event) => void onUpdateStatus(lead, event.target.value as LeadStatus)}>{stages.map((stage) => <option key={stage.value} value={stage.value}>{stage.label}</option>)}</select></td><td className="muted-cell">{formatDate(lead.created_at)}</td><td><button className="icon-button row-open" aria-label={`Open ${lead.full_name}`} onClick={() => onOpenLead(lead)}><ChevronRight size={17} /></button></td></tr>)}</tbody></table></div>
-    {!leads.length && !loading && <EmptyState title={query || statusFilter ? 'No matching leads' : 'No leads yet'} description={query || statusFilter ? 'Try another search or clear the stage filter.' : 'Your next great client relationship starts here.'} action={!query && !statusFilter && canWrite ? <button className="button button-primary" onClick={onAddLead}><Plus size={16} /> Add your first lead</button> : undefined} />}
+    <div className="table-scroll"><table className="data-table leads-table"><thead><tr>
+      <SortableHeader label="Lead" sortKey="name" activeSort={sortKey} direction={sortDirection} onSort={changeSort} filter={<select className="table-header-filter" aria-label="Filter by location" value={locationFilter} onChange={(event) => setLocationFilter(event.target.value)}><option value="">All locations</option>{locationOptions.map((location) => <option key={location} value={location}>{location}</option>)}</select>} />
+      <SortableHeader label="Contact" sortKey="contact" activeSort={sortKey} direction={sortDirection} onSort={changeSort} />
+      <SortableHeader label="Requirement" sortKey="requirement" activeSort={sortKey} direction={sortDirection} onSort={changeSort} filter={<select className="table-header-filter" aria-label="Filter by bedrooms" value={bedroomFilter} onChange={(event) => setBedroomFilter(event.target.value)}><option value="">All sizes</option>{bedroomOptions.map((bedrooms) => <option key={bedrooms} value={bedrooms}>{bedrooms} BHK</option>)}</select>} />
+      <SortableHeader label="Source" sortKey="source" activeSort={sortKey} direction={sortDirection} onSort={changeSort} filter={<select className="table-header-filter" aria-label="Filter by source" value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value as LeadSource | '')}><option value="">All sources</option>{Object.entries(sourceLabels).map(([source, label]) => <option key={source} value={source}>{label}</option>)}</select>} />
+      <SortableHeader label="Stage" sortKey="stage" activeSort={sortKey} direction={sortDirection} onSort={changeSort} filter={<select className="table-header-filter" aria-label="Filter by stage" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="">All stages</option>{stages.map((stage) => <option key={stage.value} value={stage.value}>{stage.label}</option>)}</select>} />
+      <SortableHeader label="Added" sortKey="added" activeSort={sortKey} direction={sortDirection} onSort={changeSort} />
+      <th aria-label="Open" />
+    </tr></thead><tbody>{visibleLeads.map((lead) => <tr key={lead.id}><td><button className="lead-cell lead-cell-button" onClick={() => onOpenLead(lead)}><div className={`avatar avatar-${avatarColor(lead.full_name)}`}>{initials(lead.full_name)}</div><span><strong>{lead.full_name}</strong><small>{lead.preferred_location || 'Location not set'}</small></span></button></td><td><span>{lead.email || '—'}</span><small className="table-subline">{lead.phone || 'No phone'}</small></td><td><strong className="requirement-main">{lead.bhk ? `${lead.bhk} BHK` : 'Home search'}</strong><small className="table-subline">{budgetRange(lead)}</small></td><td><span className="source-label">{sourceLabels[lead.source]}</span></td><td><select className={`status-select status-${stageFor(lead.status).tone}`} aria-label={`Change ${lead.full_name} stage`} value={lead.status} disabled={!canWrite} onChange={(event) => void onUpdateStatus(lead, event.target.value as LeadStatus)}>{stages.map((stage) => <option key={stage.value} value={stage.value}>{stage.label}</option>)}</select></td><td className="muted-cell">{formatDate(lead.created_at)}</td><td><button className="icon-button row-open" aria-label={`Open ${lead.full_name}`} onClick={() => onOpenLead(lead)}><ChevronRight size={17} /></button></td></tr>)}</tbody></table></div>
+    {!visibleLeads.length && !loading && <EmptyState title={hasActiveFilters ? 'No matching leads' : 'No leads yet'} description={hasActiveFilters ? 'Try another search or clear a filter.' : 'Your next great client relationship starts here.'} action={!hasActiveFilters && canWrite ? <button className="button button-primary" onClick={onAddLead}><Plus size={16} /> Add your first lead</button> : undefined} />}
     {loading && <div className="inline-loading"><span className="spinner" /> Updating your leads…</div>}
-    <div className="table-footnote"><span>Showing the latest {leads.length} leads</span><span>Visibility is managed by your team role</span></div>
+    <div className="table-footnote"><span>Showing {visibleLeads.length} of the latest {leads.length} leads; header filters apply to this list</span><span>Visibility is managed by your team role</span></div>
   </section>
 }
 
@@ -1254,12 +1664,12 @@ function TeamPage({ currentUser, users, temporaryPassword, onClearTemporaryPassw
               confirmLabel: 'Reactivate account',
               onConfirm: () => onUpdate(member.id, { is_active: true }),
             })}>{member.is_active ? 'Deactivate' : 'Reactivate'}</button>
-          <button className="icon-button" aria-label={`Reset password for ${member.full_name}`} title="Reset password" onClick={() => onConfirmAction({
+          <button type="button" className="button button-secondary reset-password-button" aria-label={`Reset password for ${member.full_name}`} onClick={() => onConfirmAction({
             title: `Reset ${member.full_name}'s password?`,
             message: 'Their existing password and sessions will stop working. A temporary password will be generated and shown once; share it privately. They must choose a new password at their next sign-in.',
             confirmLabel: 'Reset password',
             onConfirm: () => onResetPassword(member),
-          })}><RotateCcw size={16} /></button>
+          })}><RotateCcw size={15} /><span>Reset password</span></button>
         </div>}
       </article>)}
       {!users.length && <EmptyState title="No team members found" description="New accounts will appear here after they are created." />}

@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from openpyxl import Workbook
 from pwdlib import PasswordHash
 from sqlalchemy import create_engine, event, func, make_url, select
 from sqlalchemy.orm import Session, sessionmaker
@@ -1425,6 +1426,59 @@ class APIAuthAndAuthorizationTests(unittest.TestCase):
             files={"file": ("leads.csv", csv_content, "text/csv")},
         )
         self.assertEqual(denied.status_code, 403)
+
+    def test_excel_import_accepts_xlsx_and_reports_invalid_rows(self) -> None:
+        workbook = Workbook()
+        worksheet = workbook.active
+        worksheet.append(["full_name", "email", "source", "budget_min_inr", "budget_max_inr", "bhk"])
+        worksheet.append(["Excel Person", "excel@example.test", "website", 5_000_000, 8_000_000, 2])
+        worksheet.append(["Invalid Budget", "budget@example.test", "manual", 9_000_000, 8_000_000, 2])
+        content = io.BytesIO()
+        workbook.save(content)
+
+        response = self.client.post(
+            "/api/v1/leads/import",
+            headers=self.headers("manager@example.test"),
+            files={
+                "file": (
+                    "leads.xlsx",
+                    content.getvalue(),
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["created_count"], 1)
+        self.assertEqual(response.json()["rejected_count"], 1)
+        self.assertEqual(response.json()["errors"][0]["row"], 3)
+        leads = self.client.get(
+            "/api/v1/leads?limit=100",
+            headers=self.headers("manager@example.test"),
+        )
+        imported_lead = next(lead for lead in leads.json() if lead["full_name"] == "Excel Person")
+        self.assertEqual(imported_lead["source"], "website")
+
+    def test_import_rejects_missing_or_unsupported_headers_and_wrong_file_types(self) -> None:
+        invalid_files = [
+            ("missing-name.csv", "email\nperson@example.test\n", "text/csv", 422),
+            ("unknown-column.csv", "full_name,random_field\nPerson,value\n", "text/csv", 422),
+            ("duplicate-header.csv", "full_name,Email,email\nPerson,a@example.test,b@example.test\n", "text/csv", 422),
+            ("empty-import.csv", "full_name\n", "text/csv", 422),
+            ("extra-cell.csv", "full_name,email\nPerson,person@example.test,extra\n", "text/csv", 200),
+            ("leads.xls", b"legacy workbook", "application/vnd.ms-excel", 415),
+        ]
+        for filename, content, content_type, expected_status in invalid_files:
+            with self.subTest(filename=filename):
+                response = self.client.post(
+                    "/api/v1/leads/import",
+                    headers=self.headers("manager@example.test"),
+                    files={"file": (filename, content, content_type)},
+                )
+                self.assertEqual(response.status_code, expected_status, response.text)
+                if filename == "extra-cell.csv":
+                    self.assertEqual(response.json()["created_count"], 0)
+                    self.assertEqual(response.json()["rejected_count"], 1)
 
     def test_public_lead_intake_creates_unassigned_website_lead_and_activity(self) -> None:
         with patch.dict(os.environ, {"PUBLIC_LEAD_TEAM_ID": str(self.team.id)}):

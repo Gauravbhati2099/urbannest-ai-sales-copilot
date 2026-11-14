@@ -55,6 +55,7 @@ import {
 import { initialWorkspaceState, workspaceReducer } from './workspace-state'
 import { AppFailureScreen } from './ErrorScreens'
 import { CookieConsentBanner, PrivacyPolicyPage, StoragePreferencesPage, type LegalPageKind, type StorageConsent } from './PrivacyPages'
+import { inspectLeadImportFile, LEAD_IMPORT_COLUMNS, type LeadImportPreflight } from './lead-import'
 import './App.css'
 
 type Page = 'overview' | 'leads' | 'tasks' | 'activity' | 'team' | 'profile'
@@ -822,7 +823,7 @@ function App() {
                 <OverviewPage dashboard={dashboard} leads={leads} events={auditEvents} users={teamUsers} currentUser={user} now={renderTime.getTime()} onOpenLead={setSelectedLead} onOpenLeadById={openLeadById} onOpenTasks={() => setPage('tasks')} onSeeAllActivity={() => setPage('activity')} onCompleteTask={requestCompleteTask} onOpenLeads={() => setPage('leads')} onOpenEvent={(event) => void openAuditEvent(event)} canWrite={canWriteWorkspace} />
               )}
               {canReadWorkspace && activePage === 'leads' && (
-                <LeadsPage leads={leads} query={query} setQuery={setQuery} searchRef={leadSearchRef} statusFilter={statusFilter} setStatusFilter={setStatusFilter} onOpenLead={setSelectedLead} onUpdateStatus={requestLeadStatusUpdate} onAddLead={() => setShowCreateLead(true)} onImportFile={importCsv} onConfirmAction={setConfirmation} importErrors={importErrors} onDismissImportErrors={() => dispatch({ type: 'import-errors-cleared' })} canImport={canWriteWorkspace && user.role !== 'agent'} canWrite={canWriteWorkspace} loading={loading} />
+                <LeadsPage leads={leads} query={query} setQuery={setQuery} searchRef={leadSearchRef} statusFilter={statusFilter} setStatusFilter={setStatusFilter} onOpenLead={setSelectedLead} onUpdateStatus={requestLeadStatusUpdate} onAddLead={() => setShowCreateLead(true)} onImportFile={importCsv} importErrors={importErrors} onDismissImportErrors={() => dispatch({ type: 'import-errors-cleared' })} canImport={canWriteWorkspace && user.role !== 'agent'} canWrite={canWriteWorkspace} loading={loading} />
               )}
               {canReadWorkspace && activePage === 'tasks' && (
                 <TasksPage tasks={visibleTasks} filter={taskFilter} setFilter={setTaskFilter} users={teamUsers} currentUser={user} now={renderTime.getTime()} onComplete={requestCompleteTask} onOpenLead={openLeadById} canWrite={canWriteWorkspace} />
@@ -1258,15 +1259,23 @@ function SortableHeader({ label, sortKey, activeSort, direction, onSort, filter 
   </th>
 }
 
-function LeadsPage({ leads, query, setQuery, searchRef, statusFilter, setStatusFilter, onOpenLead, onUpdateStatus, onAddLead, onImportFile, onConfirmAction, importErrors, onDismissImportErrors, canImport, canWrite, loading }: {
+function LeadsPage({ leads, query, setQuery, searchRef, statusFilter, setStatusFilter, onOpenLead, onUpdateStatus, onAddLead, onImportFile, importErrors, onDismissImportErrors, canImport, canWrite, loading }: {
   leads: Lead[]; query: string; setQuery: (value: string) => void; statusFilter: string
   searchRef: React.RefObject<HTMLInputElement | null>
   setStatusFilter: (value: string) => void; onOpenLead: (lead: Lead) => void
   onUpdateStatus: (lead: Lead, status: LeadStatus) => void; onAddLead: () => void
-  onImportFile: (file: File) => Promise<void>; onConfirmAction: (request: ConfirmationRequest) => void
+  onImportFile: (file: File) => Promise<void>
   importErrors: CSVImportResult['errors']
   onDismissImportErrors: () => void; canImport: boolean; canWrite: boolean; loading: boolean
 }) {
+  const [showImportDialog, setShowImportDialog] = useState(false)
+  const [importFile, setImportFile] = useState<File | null>(null)
+  const [importCheck, setImportCheck] = useState<LeadImportPreflight | null>(null)
+  const [validatingImport, setValidatingImport] = useState(false)
+  const [submittingImport, setSubmittingImport] = useState(false)
+  const [importActionError, setImportActionError] = useState('')
+  const importInputRef = useRef<HTMLInputElement>(null)
+  const importValidationRef = useRef(0)
   const [sourceFilter, setSourceFilter] = useState<LeadSource | ''>('')
   const [locationFilter, setLocationFilter] = useState('')
   const [bedroomFilter, setBedroomFilter] = useState('')
@@ -1306,8 +1315,46 @@ function LeadsPage({ leads, query, setQuery, searchRef, statusFilter, setStatusF
     setBedroomFilter('')
   }
 
+  const closeImportDialog = () => {
+    importValidationRef.current += 1
+    setShowImportDialog(false)
+    setImportFile(null)
+    setImportCheck(null)
+    setValidatingImport(false)
+    setImportActionError('')
+  }
+
+  const inspectSelectedFile = async (file: File) => {
+    const requestId = importValidationRef.current + 1
+    importValidationRef.current = requestId
+    setImportFile(file)
+    setImportCheck(null)
+    setImportActionError('')
+    setValidatingImport(true)
+    const result = await inspectLeadImportFile(file)
+    if (importValidationRef.current === requestId) {
+      setImportCheck(result)
+      setValidatingImport(false)
+    }
+  }
+
+  const submitImport = async () => {
+    if (!importFile || !importCheck?.valid) return
+    setSubmittingImport(true)
+    setImportActionError('')
+    try {
+      await onImportFile(importFile)
+      closeImportDialog()
+    } catch (error) {
+      setImportActionError(getErrorMessage(error))
+    } finally {
+      setSubmittingImport(false)
+    }
+  }
+
   return <section className="panel full-panel leads-page-panel">
-    <div className="list-toolbar"><div className="search-box"><Search size={17} /><input ref={searchRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search leads, locations…" aria-label="Search leads" /><kbd className="search-shortcut">/</kbd>{query && <button className="icon-button clear-search" aria-label="Clear search" onClick={() => setQuery('')}><X size={14} /></button>}</div><span className="result-count">Showing {visibleLeads.length} of {leads.length}</span>{hasActiveFilters && <button className="text-button clear-filters" onClick={clearFilters}>Clear filters</button>}{canImport && <label className="button button-secondary import-button"><Upload size={15} /> Import CSV<input type="file" accept=".csv,text/csv" onChange={(event) => { const file = event.target.files?.[0]; if (file) onConfirmAction({ title: 'Import leads from CSV?', message: `This will add leads from “${file.name}” to the workspace. Rows that cannot be imported will be reported for review.`, confirmLabel: 'Import leads', onConfirm: () => onImportFile(file) }); event.currentTarget.value = '' }} /></label>}</div>
+    <div className="list-toolbar"><div className="search-box"><Search size={17} /><input ref={searchRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search leads, locations…" aria-label="Search leads" /><kbd className="search-shortcut">/</kbd>{query && <button className="icon-button clear-search" aria-label="Clear search" onClick={() => setQuery('')}><X size={14} /></button>}</div><span className="result-count">Showing {visibleLeads.length} of {leads.length}</span>{hasActiveFilters && <button className="text-button clear-filters" onClick={clearFilters}>Clear filters</button>}{canImport && <button type="button" className="button button-secondary import-button" onClick={() => setShowImportDialog(true)}><Upload size={15} /> Import CSV / Excel</button>}</div>
+    {showImportDialog && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !submittingImport) closeImportDialog() }}><section className="create-modal import-dialog" role="dialog" aria-modal="true" aria-labelledby="import-dialog-title"><div className="modal-header"><div><span className="eyebrow">LEAD WORKSPACE</span><h2 id="import-dialog-title">Import a spreadsheet</h2></div><button className="icon-button" type="button" aria-label="Close import dialog" onClick={closeImportDialog} disabled={submittingImport}><X size={19} /></button></div><p className="import-guidance">Use a UTF-8 <code>.csv</code> or Excel <code>.xlsx</code> file. The first worksheet row must contain these headers; extra or unknown columns are rejected.</p><div className="import-schema"><strong>Required</strong><code>full_name</code><strong>Optional</strong><span>{LEAD_IMPORT_COLUMNS.slice(1).join(', ')}</span></div><p className="import-guidance">Each remaining row is one lead. Use whole numbers for budgets (INR) and <code>bhk</code>. <code>source</code> values: website, 99acres, magicbricks, instagram, whatsapp, walk_in, manual, csv_import, other. <code>status</code> values: new, contacted, site_visit, negotiation, won, lost. Max 500 rows and 2 MiB. The browser checks the structure and the API validates it again before saving.</p><pre className="import-example"><code>full_name,email,phone,preferred_location,budget_min_inr,budget_max_inr,bhk{"\n"}Aarav Mehta,aarav@example.com,+919876543210,Baner,5000000,8000000,2</code></pre><input ref={importInputRef} className="import-file-input" type="file" accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ''; if (file) void inspectSelectedFile(file) }} /><div className="import-file-row"><button type="button" className="button button-secondary" onClick={() => importInputRef.current?.click()} disabled={validatingImport || submittingImport}>{importFile ? 'Choose another file' : 'Choose CSV or Excel file'}</button>{importFile && <span className="import-file-name">{importFile.name}</span>}</div><div className="import-validation" aria-live="polite">{validatingImport && <p>Checking file structure…</p>}{importCheck?.valid && <p className="import-valid">{importCheck.rowCount} lead rows are ready to import.</p>}{importCheck && !importCheck.valid && <ul role="alert">{importCheck.errors.map((error) => <li key={error}>{error}</li>)}</ul>}{importActionError && <p className="confirmation-error" role="alert">{importActionError}</p>}</div><div className="confirmation-actions"><button type="button" className="button button-secondary" onClick={closeImportDialog} disabled={submittingImport}>Cancel</button><button type="button" className="button button-primary" onClick={() => void submitImport()} disabled={!importCheck?.valid || validatingImport || submittingImport}>{submittingImport ? 'Importing…' : 'Import leads'}</button></div></section></div>}
     {importErrors.length > 0 && <div className="csv-errors"><div><strong>Some rows weren’t imported</strong><span>Review the row numbers and fix the source CSV before retrying.</span></div><button className="icon-button" aria-label="Dismiss import errors" onClick={onDismissImportErrors}><X size={16} /></button><ul>{importErrors.slice(0, 8).map((item) => <li key={`${item.row}-${item.message}`}><strong>Row {item.row}</strong>{item.message}</li>)}</ul>{importErrors.length > 8 && <small>And {importErrors.length - 8} more row errors.</small>}</div>}
     <div className="table-scroll"><table className="data-table leads-table"><thead><tr>
       <SortableHeader label="Lead" sortKey="name" activeSort={sortKey} direction={sortDirection} onSort={changeSort} filter={<select className="table-header-filter" aria-label="Filter by location" value={locationFilter} onChange={(event) => setLocationFilter(event.target.value)}><option value="">All locations</option>{locationOptions.map((location) => <option key={location} value={location}>{location}</option>)}</select>} />

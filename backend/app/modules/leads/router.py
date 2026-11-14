@@ -3,11 +3,15 @@ from __future__ import annotations
 import csv
 import io
 import os
+from collections.abc import Iterable, Sequence
 from datetime import datetime, timezone
+from zipfile import BadZipFile, ZipFile
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, status
+from openpyxl import load_workbook
+from openpyxl.utils.exceptions import InvalidFileException
 from pydantic import ValidationError
 from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session
@@ -59,6 +63,7 @@ CSV_COLUMNS = {
 }
 CSV_MAX_BYTES = 2 * 1024 * 1024
 CSV_MAX_ROWS = 500
+XLSX_MAX_UNCOMPRESSED_BYTES = 20 * 1024 * 1024
 
 
 def accessible_lead_statement(user: User):
@@ -146,6 +151,61 @@ def _parse_csv_row(row: dict[str, str | None]) -> LeadCreate:
         notes=notes,
         assigned_to=_parse_assignee(normalized.get("assigned_to")),
     )
+
+
+def _normalize_import_headers(headers: list[object]) -> list[str]:
+    normalized = [str(header or "").strip().lower() for header in headers]
+    while normalized and not normalized[-1]:
+        normalized.pop()
+    if not normalized or any(not header for header in normalized):
+        raise HTTPException(
+            status_code=422,
+            detail="Every import column must have a header",
+        )
+    if len(normalized) != len(set(normalized)):
+        raise HTTPException(status_code=422, detail="File contains duplicate column names")
+    if len(normalized) > len(CSV_COLUMNS):
+        raise HTTPException(
+            status_code=422,
+            detail=f"File may contain at most {len(CSV_COLUMNS)} columns",
+        )
+    if "full_name" not in normalized:
+        raise HTTPException(status_code=422, detail="File must include a full_name column")
+    unknown_columns = set(normalized) - CSV_COLUMNS
+    if unknown_columns:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unsupported columns: {', '.join(sorted(unknown_columns))}",
+        )
+    return normalized
+
+
+def _import_cell_text(value: object) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    text = str(value).strip()
+    return text or None
+
+
+def _collect_import_rows(
+    rows: Iterable[tuple[int, Sequence[object]]],
+) -> list[tuple[int, list[object]]]:
+    collected: list[tuple[int, list[object]]] = []
+    try:
+        for row_number, row in rows:
+            if not any(_import_cell_text(value) for value in row):
+                continue
+            collected.append((row_number, list(row)))
+            if len(collected) > CSV_MAX_ROWS:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"Import file may contain at most {CSV_MAX_ROWS} data rows",
+                )
+    except csv.Error as exc:
+        raise HTTPException(status_code=422, detail="CSV contains malformed quoting") from exc
+    return collected
 
 
 def _parse_assignee(value: str | None) -> UUID | None:
@@ -487,39 +547,83 @@ async def import_leads_csv(
     current_user: CurrentUser,
     session: DatabaseSession,
 ) -> CSVImportResult:
-    """Import up to 500 CSV rows; managers and owners receive per-row errors."""
+    """Import up to 500 CSV or XLSX rows; managers and owners receive per-row errors."""
     if not is_team_record_manager(current_user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
-    if file.content_type not in {"text/csv", "application/csv", "application/vnd.ms-excel"}:
-        raise HTTPException(status_code=415, detail="Upload a CSV file")
+    extension = os.path.splitext(file.filename or "")[1].lower()
+    if extension not in {".csv", ".xlsx"}:
+        raise HTTPException(status_code=415, detail="Upload a .csv or .xlsx file")
     content = await file.read(CSV_MAX_BYTES + 1)
     await file.close()
     if len(content) > CSV_MAX_BYTES:
-        raise HTTPException(status_code=413, detail="CSV file exceeds the 2 MB limit")
-    try:
-        text_content = content.decode("utf-8-sig")
-    except UnicodeDecodeError as exc:
-        raise HTTPException(status_code=422, detail="CSV must be UTF-8 encoded") from exc
+        raise HTTPException(status_code=413, detail="Import file exceeds the 2 MiB limit")
 
-    reader = csv.DictReader(io.StringIO(text_content, newline=""))
-    if not reader.fieldnames or "full_name" not in {
-        column.strip().lower() for column in reader.fieldnames if column
-    }:
-        raise HTTPException(status_code=422, detail="CSV must include a full_name column")
-    normalized_headers = [
-        column.strip().lower() for column in reader.fieldnames if column
-    ]
-    if len(normalized_headers) != len(set(normalized_headers)):
-        raise HTTPException(status_code=422, detail="CSV contains duplicate column names")
+    if extension == ".csv":
+        try:
+            text_content = content.decode("utf-8-sig")
+        except UnicodeDecodeError as exc:
+            raise HTTPException(status_code=422, detail="CSV must be UTF-8 encoded") from exc
+        try:
+            reader = csv.reader(io.StringIO(text_content, newline=""), strict=True)
+            raw_headers = next(reader, None)
+            if raw_headers is None:
+                raise HTTPException(status_code=422, detail="File must include a header row")
+            headers = _normalize_import_headers(raw_headers)
+            source_rows = _collect_import_rows(enumerate(reader, start=2))
+        except csv.Error as exc:
+            raise HTTPException(status_code=422, detail="CSV contains malformed quoting") from exc
+    else:
+        try:
+            with ZipFile(io.BytesIO(content)) as archive:
+                if "[Content_Types].xml" not in archive.namelist():
+                    raise HTTPException(status_code=422, detail="Excel file is not a valid .xlsx workbook")
+                uncompressed_size = sum(entry.file_size for entry in archive.infolist())
+                if uncompressed_size > XLSX_MAX_UNCOMPRESSED_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail="Excel file expands beyond the 20 MiB processing limit",
+                    )
+            workbook = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+            try:
+                worksheet = workbook.active
+                if worksheet is None:
+                    raise HTTPException(status_code=422, detail="Excel file does not contain a worksheet")
+                if worksheet.max_row > CSV_MAX_ROWS + 1:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"Import file may contain at most {CSV_MAX_ROWS} data rows",
+                    )
+                rows = worksheet.iter_rows(values_only=True)
+                raw_headers = next(rows, None)
+                if raw_headers is None:
+                    raise HTTPException(status_code=422, detail="File must include a header row")
+                headers = _normalize_import_headers(list(raw_headers))
+                source_rows = _collect_import_rows(enumerate(rows, start=2))
+            finally:
+                workbook.close()
+        except (BadZipFile, InvalidFileException, KeyError, OSError, ValueError) as exc:
+            raise HTTPException(
+                status_code=422,
+                detail="Excel file could not be read; upload a valid .xlsx workbook",
+            ) from exc
+    if not source_rows:
+        raise HTTPException(status_code=422, detail="File must include at least one lead row")
 
     imported: list[Lead] = []
     errors: list[CSVRowError] = []
-    for row_number, row in enumerate(reader, start=2):
-        if row_number > CSV_MAX_ROWS + 1:
-            raise HTTPException(
-                status_code=413,
-                detail=f"CSV may contain at most {CSV_MAX_ROWS} data rows",
+    for row_number, raw_row in source_rows:
+        cells = [_import_cell_text(value) for value in raw_row]
+        if any(cells[len(headers) :]):
+            errors.append(
+                CSVRowError(
+                    row=row_number,
+                    message="Row contains values beyond the header columns",
+                )
             )
+            continue
+        normalized_cells = cells[: len(headers)]
+        normalized_cells.extend([None] * (len(headers) - len(normalized_cells)))
+        row = dict(zip(headers, normalized_cells, strict=True))
         try:
             payload = _parse_csv_row(row)
             _validate_budget_range(payload.budget_min_inr, payload.budget_max_inr)
@@ -536,7 +640,7 @@ async def import_leads_csv(
                     full_name=payload.full_name,
                     email=payload.email,
                     phone=payload.phone,
-                    source=LeadSource.CSV_IMPORT,
+                    source=payload.source,
                     status=payload.status,
                     budget_min_inr=payload.budget_min_inr,
                     budget_max_inr=payload.budget_max_inr,

@@ -88,6 +88,12 @@ def _managed_user(
         and user.role is not UserRole.AGENT
     ):
         raise _not_found()
+    if (
+        manager.role is UserRole.MANAGER
+        and not manager.is_superuser
+        and user.manager_id != manager.id
+    ):
+        raise _not_found()
     return user
 
 
@@ -291,8 +297,26 @@ def update_current_profile(
     changes = payload.model_dump(exclude_unset=True)
     if not changes:
         raise HTTPException(status_code=422, detail="Provide at least one field to update")
-    if current_user.phone != changes["phone"]:
-        current_user.phone = changes["phone"]
+    phone_fields = (
+        "phone",
+        "phone_country_code",
+        "phone_region",
+        "phone_national_number",
+    )
+    if set(phone_fields).intersection(payload.model_fields_set):
+        phone_changes = {
+            field: getattr(payload, field)
+            for field in phone_fields
+        }
+        changed = any(
+            getattr(current_user, field) != value
+            for field, value in phone_changes.items()
+        )
+        for field, value in phone_changes.items():
+            setattr(current_user, field, value)
+    else:
+        changed = False
+    if changed:
         record_audit_event(
             session,
             team_id=current_user.team_id,
@@ -322,7 +346,12 @@ def list_team_users(
     if not can_manage_team_users(current_user):
         raise HTTPException(status_code=403, detail="Forbidden")
     statement = select(User).where(User.team_id == current_user.team_id)
-    if current_user.role in {UserRole.MANAGER, UserRole.CO_OWNER} and not current_user.is_superuser:
+    if current_user.role is UserRole.MANAGER and not current_user.is_superuser:
+        statement = statement.where(
+            User.role == UserRole.AGENT,
+            User.manager_id == current_user.id,
+        )
+    elif current_user.role is UserRole.CO_OWNER and not current_user.is_superuser:
         statement = statement.where(User.role == UserRole.AGENT)
     if is_active is not None:
         statement = statement.where(User.is_active.is_(is_active))
@@ -347,6 +376,42 @@ def create_team_user(
         raise HTTPException(status_code=403, detail="Owners may create agents, managers, or co-owners")
     if not owner_access and payload.role is not UserRole.AGENT:
         raise HTTPException(status_code=403, detail="Only owners may create managers or co-owners")
+    if payload.role is UserRole.AGENT:
+        if current_user.role is UserRole.MANAGER and not owner_access:
+            manager_id = current_user.id
+        elif current_user.role is UserRole.CO_OWNER and not owner_access:
+            if payload.manager_id is not None:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Only owners may assign an agent's manager",
+                )
+            manager_id = None
+        else:
+            manager_id = payload.manager_id
+        if manager_id is not None:
+            target_manager = session.scalar(
+                select(User).where(
+                    User.id == manager_id,
+                    User.team_id == current_user.team_id,
+                    User.role == UserRole.MANAGER,
+                    User.is_active.is_(True),
+                )
+            )
+            if target_manager is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Agent manager must be an active manager in your team",
+                )
+    else:
+        if payload.manager_id is not None:
+            raise HTTPException(status_code=422, detail="Only agents may have a manager")
+        manager_id = None
+    if (
+        current_user.role is UserRole.MANAGER
+        and not owner_access
+        and payload.manager_id not in {None, current_user.id}
+    ):
+        raise HTTPException(status_code=403, detail="Managers may assign agents only to themselves")
     supplied_permissions = CO_OWNER_PERMISSION_FIELDS.intersection(
         payload.model_fields_set
     )
@@ -366,6 +431,7 @@ def create_team_user(
     temporary_password = secrets.token_urlsafe(24)
     user = User(
         team_id=current_user.team_id,
+        manager_id=manager_id,
         full_name=payload.full_name,
         email=payload.email,
         password_hash=password_hash.hash(temporary_password),
@@ -425,7 +491,7 @@ def update_team_user(
     changes = payload.model_dump(exclude_unset=True)
     if not changes:
         raise HTTPException(status_code=422, detail="Provide at least one field to update")
-    if any(value is None for value in changes.values()):
+    if any(value is None and key != "manager_id" for key, value in changes.items()):
         raise HTTPException(status_code=422, detail="User fields cannot be null")
     owner_access = current_user.role is UserRole.OWNER or current_user.is_superuser
     if not owner_access and "role" in changes:
@@ -434,6 +500,26 @@ def update_team_user(
         raise HTTPException(status_code=422, detail="Unsupported user role")
     permission_fields = CO_OWNER_PERMISSION_FIELDS.intersection(changes)
     target_role = changes.get("role", user.role)
+    if "manager_id" in changes:
+        if not owner_access:
+            if user.role is not UserRole.AGENT or changes["manager_id"] != current_user.id:
+                raise HTTPException(status_code=403, detail="Only owners may change agent managers")
+        elif changes["manager_id"] is not None:
+            target_manager = session.scalar(
+                select(User).where(
+                    User.id == changes["manager_id"],
+                    User.team_id == current_user.team_id,
+                    User.role == UserRole.MANAGER,
+                    User.is_active.is_(True),
+                )
+            )
+            if target_role is not UserRole.AGENT or target_manager is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Agent manager must be an active manager in your team",
+                )
+    if target_role is not UserRole.AGENT:
+        changes["manager_id"] = None
     if permission_fields and (
         not owner_access or target_role is not UserRole.CO_OWNER
     ):
@@ -493,6 +579,11 @@ def update_team_user(
             audit_changes[field] = {"from": old_value, "to": value}
         elif field == "full_name":
             audit_changes[field] = {"changed": True}
+        elif field == "manager_id":
+            audit_changes[field] = {
+                "from": str(old_value) if old_value is not None else None,
+                "to": str(value) if value is not None else None,
+            }
         elif field in CO_OWNER_PERMISSION_FIELDS:
             audit_changes[field] = {"from": old_value, "to": value}
         setattr(user, field, value)

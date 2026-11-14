@@ -9,9 +9,13 @@ export type TaskStatus = 'open' | 'completed' | 'cancelled'
 export interface User {
   id: string
   team_id: string
+  manager_id: string | null
   full_name: string
   email: string
   phone: string | null
+  phone_country_code?: string | null
+  phone_region?: string | null
+  phone_national_number?: string | null
   role: UserRole
   is_superuser: boolean
   can_read: boolean
@@ -37,15 +41,60 @@ export interface Lead {
   full_name: string
   email: string | null
   phone: string | null
+  phone_country_code?: string | null
+  phone_region?: string | null
+  phone_national_number?: string | null
   source: LeadSource
   status: LeadStatus
   budget_min_inr: number | null
   budget_max_inr: number | null
   bhk: number | null
   preferred_location: string | null
+  location?: LocationSelection | null
   notes: string | null
   created_at: string
   updated_at: string
+}
+
+export interface LocationSelection {
+  display_name: string
+  city: string | null
+  state: string | null
+  country: string
+  country_code: string
+  latitude: number
+  longitude: number
+  osm_type: 'N' | 'W' | 'R' | null
+  osm_id: number | null
+}
+
+export interface LeadAssignee {
+  id: string
+  full_name: string
+  role: UserRole
+}
+
+export interface LeadDuplicateCheck {
+  duplicate_count: number
+}
+
+export interface LeadCreateRequest {
+  full_name: string
+  email: string | null
+  phone: string | null
+  phone_country_code: string | null
+  phone_region: string | null
+  phone_national_number: string | null
+  source: LeadSource
+  status: LeadStatus
+  budget_min_inr: number | null
+  budget_max_inr: number | null
+  bhk: number | null
+  preferred_location: string | null
+  location: LocationSelection | null
+  notes: string | null
+  assigned_to?: string
+  allow_duplicate?: boolean
 }
 
 export interface Activity {
@@ -123,6 +172,7 @@ export interface UserCreateRequest {
   full_name: string
   email: string
   role: UserRole
+  manager_id?: string | null
   can_read?: boolean
   can_write?: boolean
   can_delete?: boolean
@@ -131,6 +181,7 @@ export interface UserCreateRequest {
 
 export interface UserUpdateRequest {
   full_name?: string
+  manager_id?: string | null
   role?: UserRole
   is_active?: boolean
   can_read?: boolean
@@ -141,6 +192,9 @@ export interface UserUpdateRequest {
 
 export interface ProfileUpdateRequest {
   phone: string | null
+  phone_country_code?: string | null
+  phone_region?: string | null
+  phone_national_number?: string | null
 }
 
 export interface UserCreatedResponse {

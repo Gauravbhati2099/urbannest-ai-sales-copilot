@@ -86,10 +86,20 @@ class APIAuthAndAuthorizationTests(unittest.TestCase):
                 session, self.team.id, "manager@example.test", UserRole.MANAGER, hasher
             )
             self.agent = self.make_user(
-                session, self.team.id, "agent@example.test", UserRole.AGENT, hasher
+                session,
+                self.team.id,
+                "agent@example.test",
+                UserRole.AGENT,
+                hasher,
+                manager_id=self.manager.id,
             )
             self.other_agent = self.make_user(
-                session, self.team.id, "other.agent@example.test", UserRole.AGENT, hasher
+                session,
+                self.team.id,
+                "other.agent@example.test",
+                UserRole.AGENT,
+                hasher,
+                manager_id=self.manager.id,
             )
             self.external_agent = self.make_user(
                 session,
@@ -165,10 +175,12 @@ class APIAuthAndAuthorizationTests(unittest.TestCase):
         hasher: PasswordHash,
         *,
         is_active: bool = True,
+        manager_id=None,
     ) -> User:
         user = User(
             id=uuid4(),
             team_id=team_id,
+            manager_id=manager_id,
             full_name=email.split("@", maxsplit=1)[0],
             email=email,
             password_hash=hasher.hash("Test-password-123!"),
@@ -452,6 +464,8 @@ class APIAuthAndAuthorizationTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 201, response.text)
         body = response.json()
+        self.assertEqual(body["user"]["full_name"], "New Agent")
+        self.assertEqual(body["user"]["manager_id"], str(self.manager_id))
         self.assertEqual(body["user"]["email"], "new.agent@example.test")
         self.assertEqual(body["user"]["role"], "agent")
         self.assertTrue(body["user"]["must_change_password"])
@@ -478,6 +492,49 @@ class APIAuthAndAuthorizationTests(unittest.TestCase):
         )
         self.assertEqual(blocked.status_code, 403)
         self.assertEqual(blocked.json()["detail"]["code"], "password_change_required")
+
+    def test_owner_links_agents_to_managers_and_manager_user_scope_is_hierarchical(self) -> None:
+        owner_headers = self.headers("owner@example.test")
+        created = self.client.post(
+            "/api/v1/users",
+            headers=owner_headers,
+            json={
+                "full_name": "Independent Agent",
+                "email": "independent.agent@example.test",
+                "role": "agent",
+            },
+        )
+        self.assertEqual(created.status_code, 201, created.text)
+        agent_id = created.json()["user"]["id"]
+        self.assertIsNone(created.json()["user"]["manager_id"])
+
+        linked = self.client.patch(
+            f"/api/v1/users/{agent_id}",
+            headers=owner_headers,
+            json={"manager_id": str(self.manager_id)},
+        )
+        self.assertEqual(linked.status_code, 200, linked.text)
+        self.assertEqual(linked.json()["manager_id"], str(self.manager_id))
+
+        manager_headers = self.headers("manager@example.test")
+        visible_users = self.client.get("/api/v1/users", headers=manager_headers)
+        self.assertEqual(visible_users.status_code, 200, visible_users.text)
+        self.assertIn(agent_id, {item["id"] for item in visible_users.json()})
+
+        unlinked = self.client.patch(
+            f"/api/v1/users/{agent_id}",
+            headers=owner_headers,
+            json={"manager_id": None},
+        )
+        self.assertEqual(unlinked.status_code, 200, unlinked.text)
+        self.assertIsNone(unlinked.json()["manager_id"])
+
+        out_of_scope = self.client.patch(
+            f"/api/v1/users/{agent_id}",
+            headers=manager_headers,
+            json={"full_name": "Changed Agent"},
+        )
+        self.assertEqual(out_of_scope.status_code, 404)
 
     def test_owner_can_create_co_owner_with_explicit_global_permissions(self) -> None:
         manager_created = self.client.post(
@@ -1396,6 +1453,169 @@ class APIAuthAndAuthorizationTests(unittest.TestCase):
         self.assertEqual(response.json()["created_by"], str(self.agent_id))
         self.assertEqual(response.json()["assigned_to"], str(self.agent_id))
         self.assertEqual(response.json()["email"], "person@example.test")
+        self.assertEqual(response.json()["full_name"], "New Inquiry")
+
+    def test_lead_input_normalization_and_country_aware_phone_validation(self) -> None:
+        response = self.client.post(
+            "/api/v1/leads",
+            headers=self.headers("agent@example.test"),
+            json={
+                "full_name": "  gAuRaV   sInGh ",
+                "email": " Gaurav.Singh@GMAIL.COM ",
+                "phone_country_code": "+91",
+                "phone_region": "in",
+                "phone_national_number": "98765-43210",
+                "location": {
+                    "display_name": "Udaipur, Rajasthan, India",
+                    "city": "Udaipur",
+                    "state": "Rajasthan",
+                    "country": "India",
+                    "country_code": "in",
+                    "latitude": 24.5854,
+                    "longitude": 73.7125,
+                    "osm_type": "R",
+                    "osm_id": 12345,
+                },
+            },
+        )
+        self.assertEqual(response.status_code, 201, response.text)
+        lead = response.json()
+        self.assertEqual(lead["full_name"], "Gaurav Singh")
+        self.assertEqual(lead["email"], "gaurav.singh@gmail.com")
+        self.assertEqual(lead["phone_country_code"], "+91")
+        self.assertEqual(lead["phone_region"], "IN")
+        self.assertEqual(lead["phone_national_number"], "9876543210")
+        self.assertEqual(lead["location"]["country_code"], "IN")
+        self.assertEqual(lead["preferred_location"], "Udaipur, Rajasthan, India")
+
+        invalid_phone = self.client.post(
+            "/api/v1/leads",
+            headers=self.headers("agent@example.test"),
+            json={
+                "full_name": "Another Person",
+                "phone_country_code": "+44",
+                "phone_region": "IN",
+                "phone_national_number": "9876543210",
+            },
+        )
+        self.assertEqual(invalid_phone.status_code, 422)
+
+        us_phone = self.client.post(
+            "/api/v1/leads",
+            headers=self.headers("agent@example.test"),
+            json={
+                "full_name": "Taylor Sample",
+                "phone_country_code": "+1",
+                "phone_region": "US",
+                "phone_national_number": "(415) 555-2671",
+            },
+        )
+        self.assertEqual(us_phone.status_code, 201, us_phone.text)
+        self.assertEqual(us_phone.json()["phone_country_code"], "+1")
+        self.assertEqual(us_phone.json()["phone_region"], "US")
+        self.assertEqual(us_phone.json()["phone_national_number"], "4155552671")
+
+        invalid_name = self.client.post(
+            "/api/v1/leads",
+            headers=self.headers("agent@example.test"),
+            json={"full_name": "Name_123"},
+        )
+        self.assertEqual(invalid_name.status_code, 422)
+
+    def test_duplicate_lead_requires_explicit_confirmation(self) -> None:
+        headers = self.headers("agent@example.test")
+        invalid_check = self.client.get(
+            "/api/v1/leads/duplicates",
+            headers=headers,
+            params={"full_name": "Name_123"},
+        )
+        self.assertEqual(invalid_check.status_code, 422)
+
+        first = self.client.post(
+            "/api/v1/leads",
+            headers=headers,
+            json={"full_name": "Sanya Kapoor"},
+        )
+        self.assertEqual(first.status_code, 201, first.text)
+
+        duplicate_check = self.client.get(
+            "/api/v1/leads/duplicates",
+            headers=headers,
+            params={"full_name": "  SANYA   KAPOOR "},
+        )
+        self.assertEqual(duplicate_check.status_code, 200, duplicate_check.text)
+        self.assertEqual(duplicate_check.json()["duplicate_count"], 1)
+
+        blocked = self.client.post(
+            "/api/v1/leads",
+            headers=headers,
+            json={"full_name": "SANYA KAPOOR"},
+        )
+        self.assertEqual(blocked.status_code, 409)
+        self.assertEqual(blocked.json()["detail"]["code"], "duplicate_lead")
+
+        confirmed = self.client.post(
+            "/api/v1/leads",
+            headers=headers,
+            json={"full_name": "Sanya Kapoor", "allow_duplicate": True},
+        )
+        self.assertEqual(confirmed.status_code, 201, confirmed.text)
+
+    def test_assignment_defaults_and_manager_report_scope(self) -> None:
+        manager_headers = self.headers("manager@example.test")
+        manager_created = self.client.post(
+            "/api/v1/leads",
+            headers=manager_headers,
+            json={"full_name": "Manager Owned Lead"},
+        )
+        self.assertEqual(manager_created.status_code, 201, manager_created.text)
+        self.assertEqual(manager_created.json()["assigned_to"], str(self.manager_id))
+
+        candidates = self.client.get(
+            "/api/v1/leads/assignees",
+            headers=manager_headers,
+        )
+        self.assertEqual(candidates.status_code, 200, candidates.text)
+        self.assertEqual(
+            {item["id"] for item in candidates.json()},
+            {str(self.agent_id), str(self.other_agent_id)},
+        )
+
+        with self.session_factory.begin() as session:
+            unassigned_agent = self.make_user(
+                session,
+                self.team.id,
+                "unmanaged.agent@example.test",
+                UserRole.AGENT,
+                PasswordHash.recommended(),
+            )
+            unassigned_agent_id = unassigned_agent.id
+
+        rejected = self.client.post(
+            "/api/v1/leads",
+            headers=manager_headers,
+            json={
+                "full_name": "Out Of Scope Lead",
+                "assigned_to": str(unassigned_agent_id),
+            },
+        )
+        self.assertEqual(rejected.status_code, 403)
+
+        owner_headers = self.headers("owner@example.test")
+        owner_created = self.client.post(
+            "/api/v1/leads",
+            headers=owner_headers,
+            json={"full_name": "Owner Default Lead"},
+        )
+        self.assertEqual(owner_created.status_code, 201, owner_created.text)
+        self.assertEqual(owner_created.json()["assigned_to"], str(self.owner_id))
+
+        manager_targeting_owner = self.client.patch(
+            f"/api/v1/leads/{self.lead_id}",
+            headers=manager_headers,
+            json={"assigned_to": str(self.owner_id)},
+        )
+        self.assertEqual(manager_targeting_owner.status_code, 403)
 
     def test_health_is_public(self) -> None:
         response = self.client.get("/health")

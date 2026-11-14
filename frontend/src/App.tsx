@@ -40,8 +40,12 @@ import {
   type Dashboard,
   type CSVImportResult,
   type Lead,
+  type LeadAssignee,
+  type LeadCreateRequest,
+  type LeadDuplicateCheck,
   type LeadSource,
   type LeadStatus,
+  type LocationSelection,
   type LoginResponse,
   type PasswordResetResponse,
   type Task,
@@ -52,6 +56,9 @@ import {
   type UserRole,
   type UserUpdateRequest,
 } from './api'
+import { LocationAutocomplete } from './LocationAutocomplete'
+import { PhoneNumberInput } from './PhoneNumberInput'
+import { normalizeEmail, normalizeName, normalizePhone, splitStoredPhone, validateEmail, validateName } from './form-normalization'
 import { initialWorkspaceState, workspaceReducer } from './workspace-state'
 import { AppFailureScreen } from './ErrorScreens'
 import { CookieConsentBanner, PrivacyPolicyPage, StoragePreferencesPage, type LegalPageKind, type StorageConsent } from './PrivacyPages'
@@ -845,7 +852,7 @@ function App() {
 
       {showNotifications && canReadWorkspace && <NotificationPanel events={auditEvents.slice(0, 5)} unreadCount={unreadCount} onClose={() => setShowNotifications(false)} onOpenEvent={(event) => void openAuditEvent(event)} onOpenActivity={() => { setPage('activity'); setShowNotifications(false) }} />}
       {confirmation && <ConfirmationDialog request={confirmation} onCancel={() => setConfirmation(null)} onConfirmed={() => setConfirmation(null)} />}
-      {selectedLead && canReadWorkspace && <LeadDrawer lead={selectedLead} token={token} onClose={() => setSelectedLead(null)} onUpdated={(updated) => { setSelectedLead(updated); void refresh() }} onError={setError} onConfirmAction={setConfirmation} canWrite={canWriteWorkspace} />}
+      {selectedLead && user && canReadWorkspace && <LeadDrawer lead={selectedLead} token={token} currentUser={user} onClose={() => setSelectedLead(null)} onUpdated={(updated) => { setSelectedLead(updated); void refresh() }} onError={setError} onConfirmAction={setConfirmation} canWrite={canWriteWorkspace} />}
       {showCreateLead && canWriteWorkspace && <CreateLeadModal token={token} currentUser={user} onClose={() => setShowCreateLead(false)} onConfirmAction={setConfirmation} onCreated={async (lead) => { setShowCreateLead(false); setNotice(`Added ${lead.full_name} to your leads.`); setPage('leads'); await refresh(); setSelectedLead(lead) }} onError={setError} />}
       <CookieConsentBanner consent={storageConsent} onChoose={chooseStorageConsent} onManage={() => openLegalPage('cookies')} />
     </div>
@@ -1009,6 +1016,7 @@ function LoadingState() {
 
 function LoginScreen({ onLogin, error, setError, theme, onToggleTheme, onOpenPrivacy, onOpenCookieSettings }: { onLogin: (response: LoginResponse) => void; error: string; setError: (message: string) => void; theme: Theme; onToggleTheme: () => void; onOpenPrivacy: () => void; onOpenCookieSettings: () => void }) {
   const [email, setEmail] = useState('')
+  const [emailValidationError, setEmailValidationError] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [forgotPassword, setForgotPassword] = useState(false)
@@ -1017,18 +1025,22 @@ function LoginScreen({ onLogin, error, setError, theme, onToggleTheme, onOpenPri
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    const normalizedEmail = normalizeEmail(email)
+    const validationError = validateEmail(normalizedEmail)
+    setEmailValidationError(validationError)
+    if (validationError) return
     setSubmitting(true)
     setError('')
     try {
       if (forgotPassword) {
         await api<{ message: string }>('/auth/password-recovery', '', {
           method: 'POST',
-          body: JSON.stringify({ email }),
+          body: JSON.stringify({ email: normalizedEmail }),
         })
         setRecoverySent(true)
         return
       }
-      const response = await api<LoginResponse>('/auth/login', '', { method: 'POST', body: JSON.stringify({ email, password }) })
+      const response = await api<LoginResponse>('/auth/login', '', { method: 'POST', body: JSON.stringify({ email: normalizedEmail, password }) })
       onLogin(response)
     } catch (requestError) {
       setError(getErrorMessage(requestError))
@@ -1056,7 +1068,7 @@ function LoginScreen({ onLogin, error, setError, theme, onToggleTheme, onOpenPri
           <h2>{forgotPassword ? <>Request a password<br />reset</> : <>Sign in to your<br />workspace</>}</h2>
           <p className="auth-description">{forgotPassword ? 'If your account is active, your team owner can issue a temporary password.' : 'View the leads, pipeline, and follow-ups your team is working on'}</p>
           <form className="auth-form" onSubmit={(event) => void submit(event)}>
-            <label>Email address<input type="email" autoComplete={forgotPassword ? 'email' : 'username'} value={email} onChange={(event) => { setEmail(event.target.value); setRecoverySent(false) }} placeholder="you@urbannest.in" required /></label>
+            <label>Email address<input type="email" autoComplete={forgotPassword ? 'email' : 'username'} value={email} onChange={(event) => { setEmail(event.target.value); setEmailValidationError(''); setRecoverySent(false) }} onBlur={() => { const normalized = normalizeEmail(email); setEmail(normalized); setEmailValidationError(normalized ? validateEmail(normalized) : '') }} placeholder="you@urbannest.in" maxLength={320} required aria-invalid={Boolean(emailValidationError)} aria-describedby={emailValidationError ? 'login-email-error' : undefined} />{emailValidationError && <small className="inline-form-error" id="login-email-error">{emailValidationError}</small>}</label>
             {!forgotPassword && <label>Password<span className="password-input-wrap"><input type={showPassword ? 'text' : 'password'} autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Enter your password" required /><button className="password-visibility-toggle" type="button" aria-label={showPassword ? 'Hide password' : 'Show password'} aria-pressed={showPassword} onClick={() => setShowPassword((visible) => !visible)}>{showPassword ? <EyeOff size={16} /> : <Eye size={16} />}</button></span></label>}
             {!forgotPassword && <button className="auth-link auth-forgot-link" type="button" onClick={() => { setForgotPassword(true); setRecoverySent(false); setError('') }}>Forgot password?</button>}
             {error && <div className="form-error"><CircleAlert size={16} />{error}</div>}
@@ -1488,14 +1500,24 @@ function ProfilePage({ user, onChangePassword, onSaveProfile, onConfirmAction }:
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
-  const [phone, setPhone] = useState(user.phone ?? '')
+  const storedPhone = splitStoredPhone(user.phone, user.phone_region)
+  const [phone, setPhone] = useState(storedPhone.nationalNumber)
+  const [phoneRegion, setPhoneRegion] = useState(storedPhone.region)
+  const [phoneError, setPhoneError] = useState('')
   const [formError, setFormError] = useState('')
   const [profileSaving, setProfileSaving] = useState(false)
   const [saving, setSaving] = useState(false)
 
   const saveProfile = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    const normalizedPhone = phone.trim()
+    let normalizedPhone
+    try {
+      normalizedPhone = normalizePhone(phone, phoneRegion)
+      setPhoneError('')
+    } catch (validationError) {
+      setPhoneError(validationError instanceof Error ? validationError.message : 'Enter a valid phone number.')
+      return
+    }
     onConfirmAction({
       title: 'Save your profile changes?',
       message: `This will ${normalizedPhone ? 'set your profile phone number' : 'remove your profile phone number'}.`,
@@ -1503,10 +1525,16 @@ function ProfilePage({ user, onChangePassword, onSaveProfile, onConfirmAction }:
       onConfirm: async () => {
         setProfileSaving(true)
         try {
-          if (!await onSaveProfile({ phone: normalizedPhone || null })) {
+          if (!await onSaveProfile({
+            phone: normalizedPhone?.phone ?? null,
+            phone_country_code: normalizedPhone?.phone_country_code ?? null,
+            phone_region: normalizedPhone?.phone_region ?? null,
+            phone_national_number: normalizedPhone?.phone_national_number ?? null,
+          })) {
             throw new Error('Your profile was not updated. Review the error message and try again.')
           }
-          setPhone(normalizedPhone)
+          setPhone(normalizedPhone?.phone_national_number ?? '')
+          if (normalizedPhone) setPhoneRegion(normalizedPhone.phone_region)
         } finally {
           setProfileSaving(false)
         }
@@ -1556,8 +1584,8 @@ function ProfilePage({ user, onChangePassword, onSaveProfile, onConfirmAction }:
         <div><dt>Password setup</dt><dd>{user.must_change_password ? 'Change required' : 'Up to date'}</dd></div>
       </dl>
       <form className="account-form profile-phone-form" onSubmit={(event) => void saveProfile(event)}>
-        <label>Phone number<input type="tel" autoComplete="tel" maxLength={32} value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="Add a phone number (optional)" /></label>
-        <button className="button button-secondary" disabled={profileSaving || phone.trim() === (user.phone ?? '')}>{profileSaving ? 'Saving…' : 'Save phone number'}</button>
+        <PhoneNumberInput label="Phone number" value={phone} region={phoneRegion} onChange={(value) => { setPhone(value); setPhoneError('') }} onRegionChange={setPhoneRegion} error={phoneError} />
+        <button className="button button-secondary" disabled={profileSaving}>{profileSaving ? 'Saving…' : 'Save phone number'}</button>
       </form>
     </article>
     <article className="panel password-panel">
@@ -1588,6 +1616,9 @@ function TeamPage({ currentUser, users, temporaryPassword, onClearTemporaryPassw
   const [showForm, setShowForm] = useState(false)
   const [fullName, setFullName] = useState('')
   const [email, setEmail] = useState('')
+  const [managerId, setManagerId] = useState('')
+  const [fullNameError, setFullNameError] = useState('')
+  const [emailError, setEmailError] = useState('')
   const [role, setRole] = useState<UserRole>('agent')
   const [permissions, setPermissions] = useState({
     can_read: true,
@@ -1603,10 +1634,18 @@ function TeamPage({ currentUser, users, temporaryPassword, onClearTemporaryPassw
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     onError('')
+    const normalizedName = normalizeName(fullName)
+    const normalizedEmail = normalizeEmail(email)
+    const nextNameError = validateName(normalizedName)
+    const nextEmailError = validateEmail(normalizedEmail)
+    setFullNameError(nextNameError)
+    setEmailError(nextEmailError)
+    if (nextNameError || nextEmailError) return
     const newUser: UserCreateRequest = {
-      full_name: fullName,
-      email,
+      full_name: normalizedName,
+      email: normalizedEmail,
       role,
+      ...(ownerAccess && role === 'agent' ? { manager_id: managerId || null } : {}),
       ...(role === 'co_owner' ? permissions : {}),
     }
     onConfirmAction({
@@ -1619,6 +1658,7 @@ function TeamPage({ currentUser, users, temporaryPassword, onClearTemporaryPassw
           await onCreate(newUser)
           setFullName('')
           setEmail('')
+          setManagerId('')
           setRole('agent')
           setPermissions({ can_read: true, can_write: true, can_delete: false, can_manage_users: false })
           setShowForm(false)
@@ -1644,9 +1684,10 @@ function TeamPage({ currentUser, users, temporaryPassword, onClearTemporaryPassw
     </div>
     {temporaryPassword && <div className="temporary-password-card" role="status"><div><strong>Temporary password for {temporaryPassword.email}</strong><p>Share this one-time password securely. The user must change it after signing in.</p><code>{temporaryPassword.password}</code></div><button className="icon-button" aria-label="Dismiss temporary password" onClick={onClearTemporaryPassword}><X size={16} /></button></div>}
     {showForm && canWriteTeam && <form className="team-create-form account-form" onSubmit={(event) => void submit(event)}>
-      <label>Full name<input value={fullName} onChange={(event) => setFullName(event.target.value)} autoComplete="name" maxLength={160} required /></label>
-      <label>Email address<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" maxLength={320} required /></label>
+      <label>Full name<input value={fullName} onChange={(event) => { setFullName(event.target.value); setFullNameError('') }} onBlur={() => { const name = normalizeName(fullName); setFullName(name); setFullNameError(validateName(name)) }} autoComplete="name" maxLength={160} required aria-invalid={Boolean(fullNameError)} />{fullNameError && <small className="inline-form-error">{fullNameError}</small>}</label>
+      <label>Email address<input type="email" value={email} onChange={(event) => { setEmail(event.target.value); setEmailError('') }} onBlur={() => { const normalized = normalizeEmail(email); setEmail(normalized); setEmailError(normalized ? validateEmail(normalized) : '') }} autoComplete="email" maxLength={320} required aria-invalid={Boolean(emailError)} />{emailError && <small className="inline-form-error">{emailError}</small>}</label>
       <label>Role<select value={role} onChange={(event) => setRole(event.target.value as UserRole)}><option value="agent">Agent</option>{ownerAccess && <><option value="manager">Manager</option><option value="co_owner">Co-owner</option></>}</select></label>
+      {ownerAccess && role === 'agent' && <label>Reports to<select value={managerId} onChange={(event) => setManagerId(event.target.value)}><option value="">No manager</option>{users.filter((member) => member.role === 'manager' && member.is_active).map((manager) => <option key={manager.id} value={manager.id}>{manager.full_name}</option>)}</select></label>}
       {role === 'co_owner' && ownerAccess && <fieldset className="co-owner-permissions">
         <legend>Co-owner access</legend>
         {([
@@ -1677,6 +1718,16 @@ function TeamPage({ currentUser, users, temporaryPassword, onClearTemporaryPassw
             })
           }}><option value="manager">Manager</option><option value="co_owner">Co-owner</option><option value="agent">Agent</option></select></label>
           : <span className="role-pill">{member.role}</span>}
+        {ownerAccess && member.role === 'agent' && <label className="member-role-control"><span>Reports to</span><select aria-label={`Manager for ${member.full_name}`} value={member.manager_id ?? ''} onChange={(event) => {
+          const nextManagerId = event.target.value || null
+          if (nextManagerId === member.manager_id) return
+          onConfirmAction({
+            title: `Change ${member.full_name}'s manager?`,
+            message: 'This changes which manager can view and assign work to this agent.',
+            confirmLabel: 'Change manager',
+            onConfirm: () => onUpdate(member.id, { manager_id: nextManagerId }),
+          })
+        }}><option value="">No manager</option>{users.filter((candidate) => candidate.role === 'manager' && candidate.is_active).map((manager) => <option key={manager.id} value={manager.id}>{manager.full_name}</option>)}</select></label>}
         {ownerAccess && member.role === 'co_owner' && member.id !== currentUser.id && <div className="member-permissions">
           {([
             ['can_read', 'Read'],
@@ -1725,8 +1776,9 @@ function TeamPage({ currentUser, users, temporaryPassword, onClearTemporaryPassw
   </section>
 }
 
-function LeadDrawer({ lead: initialLead, token, onClose, onUpdated, onError, onConfirmAction, canWrite }: { lead: Lead; token: string; onClose: () => void; onUpdated: (lead: Lead) => void; onError: (message: string) => void; onConfirmAction: (request: ConfirmationRequest) => void; canWrite: boolean }) {
+function LeadDrawer({ lead: initialLead, token, currentUser, onClose, onUpdated, onError, onConfirmAction, canWrite }: { lead: Lead; token: string; currentUser: User; onClose: () => void; onUpdated: (lead: Lead) => void; onError: (message: string) => void; onConfirmAction: (request: ConfirmationRequest) => void; canWrite: boolean }) {
   const [lead, setLead] = useState(initialLead)
+  const [assignees, setAssignees] = useState<LeadAssignee[]>([])
   const [activities, setActivities] = useState<Activity[]>([])
   const [activityText, setActivityText] = useState('')
   const [activityType, setActivityType] = useState<Activity['type']>('call')
@@ -1743,6 +1795,48 @@ function LeadDrawer({ lead: initialLead, token, onClose, onUpdated, onError, onC
       .then(setActivities)
       .catch((requestError: unknown) => onError(getErrorMessage(requestError)))
   }, [initialLead, onError, token])
+
+  const canChangeAssignment = currentUser.is_superuser || ['owner', 'co_owner', 'manager'].includes(currentUser.role)
+
+  useEffect(() => {
+    if (!canChangeAssignment) return
+    let active = true
+    api<LeadAssignee[]>('/leads/assignees', token)
+      .then((items) => {
+        if (active) setAssignees(items)
+      })
+      .catch((requestError: unknown) => {
+        if (active) onError(getErrorMessage(requestError))
+      })
+    return () => {
+      active = false
+    }
+  }, [canChangeAssignment, onError, token])
+
+  const changeAssignee = (assignedTo: string) => {
+    if (!assignedTo || assignedTo === lead.assigned_to || !canWrite) return
+    const assignee = assignees.find((item) => item.id === assignedTo)
+    if (!assignee) return
+    onConfirmAction({
+      title: `Assign ${lead.full_name} to ${assignee.full_name}?`,
+      message: 'This changes who owns the next follow-up for this lead.',
+      confirmLabel: 'Change assignment',
+      onConfirm: async () => {
+        try {
+          const updated = await api<Lead>(`/leads/${lead.id}`, token, {
+            method: 'PATCH',
+            body: JSON.stringify({ assigned_to: assignedTo }),
+          })
+          setLead(updated)
+          onUpdated(updated)
+        } catch (requestError) {
+          const message = getErrorMessage(requestError)
+          onError(message)
+          throw new Error(message)
+        }
+      },
+    })
+  }
 
   const changeStage = (status: LeadStatus) => {
     if (status === lead.status) return
@@ -1817,6 +1911,7 @@ function LeadDrawer({ lead: initialLead, token, onClose, onUpdated, onError, onC
 
   return <><button className="drawer-backdrop" aria-label="Close lead details" onClick={onClose} /><aside className="lead-drawer"><div className="drawer-topbar"><span className="eyebrow">Lead profile</span><button className="icon-button" aria-label="Close lead details" onClick={onClose}><X size={19} /></button></div><div className="drawer-lead-head"><div className={`avatar avatar-large avatar-${avatarColor(lead.full_name)}`}>{initials(lead.full_name)}</div><div><h2>{lead.full_name}</h2><span className="drawer-subtitle">Added {formatDate(lead.created_at, { day: 'numeric', month: 'long', year: 'numeric' })}</span></div></div>
     <div className="drawer-stage"><label htmlFor="drawer-status">Current stage</label><select id="drawer-status" className={`status-select status-${stageFor(lead.status).tone}`} value={lead.status} disabled={!canWrite} onChange={(event) => void changeStage(event.target.value as LeadStatus)}>{stages.map((stage) => <option key={stage.value} value={stage.value}>{stage.label}</option>)}</select></div>
+    {canChangeAssignment && <div className="drawer-stage"><label htmlFor="drawer-assignee">Assigned to</label><select id="drawer-assignee" value={lead.assigned_to ?? ''} disabled={!canWrite} onChange={(event) => changeAssignee(event.target.value)}>{!lead.assigned_to && <option value="" disabled>Unassigned</option>}{lead.assigned_to === currentUser.id && !assignees.some((item) => item.id === currentUser.id) && <option value={currentUser.id}>{currentUser.full_name} · default</option>}{assignees.map((assignee) => <option key={assignee.id} value={assignee.id}>{assignee.full_name} · {assignee.role.replace('_', ' ')}</option>)}</select></div>}
     {canWrite && <div className="drawer-actions"><button className="button button-secondary" onClick={() => setActiveForm(activeForm === 'activity' ? null : 'activity')}><ActivityIcon size={15} /> Log activity</button><button className="button button-secondary" onClick={() => setActiveForm(activeForm === 'task' ? null : 'task')}><CalendarDays size={15} /> Add follow-up</button></div>}
     {canWrite && activeForm === 'activity' && <form className="drawer-form" onSubmit={(event) => void submitActivity(event)}><div className="drawer-form-heading"><strong>Log an interaction</strong><button type="button" className="icon-button" aria-label="Close form" onClick={() => setActiveForm(null)}><X size={15} /></button></div><select value={activityType} onChange={(event) => setActivityType(event.target.value as Activity['type'])}><option value="call">Call</option><option value="note">Note</option><option value="site_visit">Site visit</option><option value="email">Email</option><option value="whatsapp">WhatsApp</option></select><textarea value={activityText} onChange={(event) => setActivityText(event.target.value)} placeholder="What happened? Add a useful note…" rows={3} required /><button className="button button-primary" disabled={saving}>{saving ? 'Saving…' : 'Save activity'}</button></form>}
     {canWrite && activeForm === 'task' && <form className="drawer-form" onSubmit={(event) => void submitTask(event)}><div className="drawer-form-heading"><strong>Plan a follow-up</strong><button type="button" className="icon-button" aria-label="Close form" onClick={() => setActiveForm(null)}><X size={15} /></button></div><input value={taskTitle} onChange={(event) => setTaskTitle(event.target.value)} placeholder="e.g. Call to confirm site visit" maxLength={200} required /><input type="datetime-local" value={taskDate} onChange={(event) => setTaskDate(event.target.value)} required /><button className="button button-primary" disabled={saving}>{saving ? 'Saving…' : 'Create follow-up'}</button></form>}
@@ -1862,45 +1957,214 @@ function AICopilotPreview({ lead }: { lead: Lead }) {
 }
 
 function CreateLeadModal({ token, currentUser, onClose, onCreated, onError, onConfirmAction }: { token: string; currentUser: User; onClose: () => void; onCreated: (lead: Lead) => void | Promise<void>; onError: (message: string) => void; onConfirmAction: (request: ConfirmationRequest) => void }) {
-  const [form, setForm] = useState({ full_name: '', email: '', phone: '', source: 'manual' as LeadSource, status: 'new' as LeadStatus, budget_min_inr: '', budget_max_inr: '', bhk: '', preferred_location: '', notes: '' })
+  const [form, setForm] = useState({
+    full_name: '',
+    email: '',
+    phone: '',
+    source: 'manual' as LeadSource,
+    status: 'new' as LeadStatus,
+    budget_min_inr: '',
+    budget_max_inr: '',
+    bhk: '',
+    notes: '',
+  })
+  const [phoneRegion, setPhoneRegion] = useState('IN')
+  const [location, setLocation] = useState<LocationSelection | null>(null)
+  const [locationHasUnverifiedText, setLocationHasUnverifiedText] = useState(false)
+  const [assignees, setAssignees] = useState<LeadAssignee[]>([])
+  const [assignedTo, setAssignedTo] = useState(currentUser.role === 'manager' ? '' : currentUser.id)
+  const [nameError, setNameError] = useState('')
+  const [emailError, setEmailError] = useState('')
+  const [phoneError, setPhoneError] = useState('')
+  const [formError, setFormError] = useState('')
+  const [duplicateCount, setDuplicateCount] = useState(0)
+  const [pendingPayload, setPendingPayload] = useState<LeadCreateRequest | null>(null)
   const [saving, setSaving] = useState(false)
+  const canAssign = currentUser.is_superuser || ['owner', 'co_owner', 'manager'].includes(currentUser.role)
 
-  const submit = (event: FormEvent<HTMLFormElement>) => {
+  useEffect(() => {
+    if (!canAssign) return
+    let active = true
+    api<LeadAssignee[]>('/leads/assignees', token)
+      .then((items) => {
+        if (active) setAssignees(items)
+      })
+      .catch((requestError: unknown) => {
+        if (active) setFormError(getErrorMessage(requestError))
+      })
+    return () => {
+      active = false
+    }
+  }, [canAssign, token])
+
+  const update = (key: keyof typeof form, value: string) => {
+    setForm((current) => ({ ...current, [key]: value }))
+    if (key === 'full_name') setNameError('')
+    if (key === 'email') setEmailError('')
+  }
+
+  const saveLead = async (payload: LeadCreateRequest, allowDuplicate: boolean) => {
+    setSaving(true)
+    setFormError('')
+    try {
+      const lead = await api<Lead>('/leads', token, {
+        method: 'POST',
+        body: JSON.stringify({ ...payload, allow_duplicate: allowDuplicate }),
+      })
+      setDuplicateCount(0)
+      await onCreated(lead)
+    } catch (requestError) {
+      if (requestError instanceof ApiError && requestError.status === 409 && !allowDuplicate) {
+        try {
+          const query = new URLSearchParams({ full_name: payload.full_name })
+          const duplicateCheck = await api<LeadDuplicateCheck>(`/leads/duplicates?${query}`, token)
+          setPendingPayload(payload)
+          setDuplicateCount(Math.max(duplicateCheck.duplicate_count, 1))
+          return
+        } catch (duplicateError) {
+          const message = getErrorMessage(duplicateError)
+          setFormError(message)
+          onError(message)
+          throw new Error(message)
+        }
+      }
+      const message = getErrorMessage(requestError)
+      setFormError(message)
+      onError(message)
+      throw new Error(message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     onError('')
-    const payload = {
-      ...form,
-      email: form.email || null,
-      phone: form.phone || null,
+    setFormError('')
+    const normalizedName = normalizeName(form.full_name)
+    const nextNameError = validateName(normalizedName)
+    const normalizedEmail = normalizeEmail(form.email)
+    const nextEmailError = normalizedEmail ? validateEmail(normalizedEmail) : ''
+    setNameError(nextNameError)
+    setEmailError(nextEmailError)
+    if (nextNameError || nextEmailError) return
+    if (locationHasUnverifiedText) {
+      setFormError('Choose a verified location from the suggestions or clear the location field.')
+      return
+    }
+
+    let phone
+    try {
+      phone = normalizePhone(form.phone, phoneRegion)
+      setPhoneError('')
+    } catch (validationError) {
+      const message = validationError instanceof Error ? validationError.message : 'Enter a valid phone number.'
+      setPhoneError(message)
+      return
+    }
+    if (
+      form.budget_min_inr
+      && form.budget_max_inr
+      && Number(form.budget_min_inr) > Number(form.budget_max_inr)
+    ) {
+      setFormError('Minimum budget must not exceed maximum budget.')
+      return
+    }
+
+    const payload: LeadCreateRequest = {
+      full_name: normalizedName,
+      email: normalizedEmail || null,
+      phone: phone?.phone ?? null,
+      phone_country_code: phone?.phone_country_code ?? null,
+      phone_region: phone?.phone_region ?? null,
+      phone_national_number: phone?.phone_national_number ?? null,
+      source: form.source,
+      status: form.status,
       budget_min_inr: form.budget_min_inr ? Number(form.budget_min_inr) : null,
       budget_max_inr: form.budget_max_inr ? Number(form.budget_max_inr) : null,
       bhk: form.bhk ? Number(form.bhk) : null,
-      notes: form.notes || null,
-      assigned_to: currentUser.role === 'agent' ? currentUser.id : undefined,
+      preferred_location: location?.display_name ?? null,
+      location,
+      notes: form.notes.trim() || null,
+      ...(assignedTo ? { assigned_to: assignedTo } : {}),
     }
+
+    setSaving(true)
+    try {
+      const query = new URLSearchParams({ full_name: payload.full_name })
+      const duplicateCheck = await api<LeadDuplicateCheck>(`/leads/duplicates?${query}`, token)
+      if (duplicateCheck.duplicate_count) {
+        setPendingPayload(payload)
+        setDuplicateCount(duplicateCheck.duplicate_count)
+        return
+      }
+    } catch (requestError) {
+      const message = getErrorMessage(requestError)
+      setFormError(message)
+      onError(message)
+      return
+    } finally {
+      setSaving(false)
+    }
+
     onConfirmAction({
       title: `Add ${payload.full_name} as a lead?`,
       message: `This creates a new lead in the ${stageFor(payload.status).label.toLowerCase()} stage${payload.email ? ` with email ${payload.email}` : ''}.`,
       confirmLabel: 'Save lead',
-      onConfirm: async () => {
-        setSaving(true)
-        try {
-          const lead = await api<Lead>('/leads', token, { method: 'POST', body: JSON.stringify(payload) })
-          await onCreated(lead)
-        } catch (requestError) {
-          const message = getErrorMessage(requestError)
-          onError(message)
-          throw new Error(message)
-        } finally {
-          setSaving(false)
-        }
-      },
+      onConfirm: () => saveLead(payload, false),
     })
   }
 
-  const update = (key: keyof typeof form, value: string) => setForm((current) => ({ ...current, [key]: value }))
-
-  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}><section className="create-modal" role="dialog" aria-modal="true" aria-labelledby="create-lead-title"><div className="modal-header"><div><span className="eyebrow">A NEW RELATIONSHIP</span><h2 id="create-lead-title">Add a lead<span className="heading-period">.</span></h2></div><button className="icon-button" aria-label="Close" onClick={onClose}><X size={19} /></button></div><form className="lead-form" onSubmit={(event) => void submit(event)}><label className="form-span">Full name<input autoFocus value={form.full_name} onChange={(event) => update('full_name', event.target.value)} placeholder="e.g. Aanya Mehta" maxLength={160} required /></label><label>Email address<input type="email" value={form.email} onChange={(event) => update('email', event.target.value)} placeholder="aanya@example.com" /></label><label>Phone number<input type="tel" value={form.phone} onChange={(event) => update('phone', event.target.value)} placeholder="+91 98765 43210" /></label><label>Preferred location<input value={form.preferred_location} onChange={(event) => update('preferred_location', event.target.value)} placeholder="Baner, Pune" maxLength={160} /></label><label>Lead source<select value={form.source} onChange={(event) => update('source', event.target.value)}>{Object.entries(sourceLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><label>Pipeline stage<select value={form.status} onChange={(event) => update('status', event.target.value)}>{stages.map((stage) => <option key={stage.value} value={stage.value}>{stage.label}</option>)}</select></label><label>BHK<input type="number" min="1" max="20" value={form.bhk} onChange={(event) => update('bhk', event.target.value)} placeholder="2" /></label><label>Budget from (₹)<input type="number" min="0" value={form.budget_min_inr} onChange={(event) => update('budget_min_inr', event.target.value)} placeholder="6000000" /></label><label>Budget up to (₹)<input type="number" min="0" value={form.budget_max_inr} onChange={(event) => update('budget_max_inr', event.target.value)} placeholder="9000000" /></label><label className="form-span">Notes<textarea value={form.notes} onChange={(event) => update('notes', event.target.value)} placeholder="What would be helpful to remember?" rows={3} /></label><div className="form-span form-footer"><span className="form-hint">Keep contact details accurate and use fictional data for demos.</span><div><button type="button" className="button button-secondary" onClick={onClose}>Cancel</button><button className="button button-primary" disabled={saving}>{saving ? 'Saving…' : 'Save lead'}<ArrowUpRight size={16} /></button></div></div></form></section></div>
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
+      <section className="create-modal" role="dialog" aria-modal="true" aria-labelledby="create-lead-title">
+        <div className="modal-header">
+          <div><span className="eyebrow">A NEW RELATIONSHIP</span><h2 id="create-lead-title">Add a lead<span className="heading-period">.</span></h2></div>
+          <button className="icon-button" aria-label="Close" onClick={onClose}><X size={19} /></button>
+        </div>
+        <form className="lead-form" onSubmit={(event) => void submit(event)}>
+          <label className="form-span">Full name
+            <input autoFocus value={form.full_name} onChange={(event) => update('full_name', event.target.value)} onBlur={() => { const name = normalizeName(form.full_name); setForm((current) => ({ ...current, full_name: name })); setNameError(validateName(name)) }} placeholder="e.g. Aanya Mehta" maxLength={160} required aria-invalid={Boolean(nameError)} aria-describedby={nameError ? 'lead-name-error' : undefined} />
+            {nameError && <small className="inline-form-error" id="lead-name-error">{nameError}</small>}
+          </label>
+          <label>Email address
+            <input type="email" value={form.email} onChange={(event) => update('email', event.target.value)} onBlur={() => { const email = normalizeEmail(form.email); setForm((current) => ({ ...current, email })); setEmailError(email ? validateEmail(email) : '') }} placeholder="aanya@example.com" maxLength={320} aria-invalid={Boolean(emailError)} aria-describedby={emailError ? 'lead-email-error' : undefined} />
+            {emailError && <small className="inline-form-error" id="lead-email-error">{emailError}</small>}
+          </label>
+          <PhoneNumberInput label="Phone number" value={form.phone} region={phoneRegion} onChange={(value) => { update('phone', value); setPhoneError('') }} onRegionChange={setPhoneRegion} error={phoneError} />
+          <LocationAutocomplete value={location} onChange={(selected, unverified) => { setLocation(selected); setLocationHasUnverifiedText(unverified); setFormError('') }} />
+          <label>Lead source<select value={form.source} onChange={(event) => update('source', event.target.value)}>{Object.entries(sourceLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+          <label>Pipeline stage<select value={form.status} onChange={(event) => update('status', event.target.value as LeadStatus)}>{stages.map((stage) => <option key={stage.value} value={stage.value}>{stage.label}</option>)}</select></label>
+          {(currentUser.is_superuser || ['owner', 'co_owner', 'manager'].includes(currentUser.role)) && (
+            <label>Assign to
+              <select value={assignedTo} onChange={(event) => setAssignedTo(event.target.value)}>
+                {currentUser.role === 'manager' && <option value="">Me (default)</option>}
+                {assignees.map((assignee) => <option key={assignee.id} value={assignee.id}>{assignee.full_name} · {assignee.role.replace('_', ' ')}</option>)}
+              </select>
+            </label>
+          )}
+          <label>BHK<input type="number" min="1" max="20" value={form.bhk} onChange={(event) => update('bhk', event.target.value)} placeholder="2" /></label>
+          <label>Budget from (₹)<input type="number" min="0" value={form.budget_min_inr} onChange={(event) => update('budget_min_inr', event.target.value)} placeholder="6000000" /></label>
+          <label>Budget up to (₹)<input type="number" min="0" value={form.budget_max_inr} onChange={(event) => update('budget_max_inr', event.target.value)} placeholder="9000000" /></label>
+          <label className="form-span">Notes<textarea value={form.notes} onChange={(event) => update('notes', event.target.value)} placeholder="What would be helpful to remember?" rows={3} /></label>
+          {duplicateCount > 0 && pendingPayload && (
+            <div className="duplicate-lead-prompt form-span" role="alert">
+              <p>{duplicateCount === 1 ? 'A lead with this name already exists.' : `${duplicateCount} leads with this name already exist.`} Do you want to create a separate one?</p>
+              <div>
+                <button type="button" className="button button-secondary" onClick={() => { setDuplicateCount(0); setPendingPayload(null) }}>Cancel</button>
+                <button type="button" className="button button-primary" disabled={saving} onClick={() => void saveLead(pendingPayload, true)}>{saving ? 'Saving…' : 'Create separate lead'}</button>
+              </div>
+            </div>
+          )}
+          {formError && <p className="inline-form-error form-span" role="alert">{formError}</p>}
+          <div className="form-span form-footer">
+            <span className="form-hint">Keep contact details accurate and use fictional data for demos.</span>
+            <div><button type="button" className="button button-secondary" onClick={onClose}>Cancel</button><button className="button button-primary" disabled={saving}>{saving ? 'Checking…' : 'Save lead'}<ArrowUpRight size={16} /></button></div>
+          </div>
+        </form>
+      </section>
+    </div>
+  )
 }
 
 function EmptyState({ title, description, action }: { title: string; description: string; action?: React.ReactNode }) {

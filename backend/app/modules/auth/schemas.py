@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import re
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.core.normalization import normalize_email, normalize_person_name
+from app.modules.leads.schemas import PhoneFields
 from app.db.models import UserRole
 
 
@@ -17,10 +18,7 @@ class LoginRequest(BaseModel):
     @field_validator("email")
     @classmethod
     def normalize_email(cls, value: str) -> str:
-        normalized = value.strip().lower()
-        if re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", normalized) is None:
-            raise ValueError("Enter a valid email address")
-        return normalized
+        return normalize_email(value, required=True) or ""
 
 
 class PasswordRecoveryRequest(BaseModel):
@@ -31,10 +29,7 @@ class PasswordRecoveryRequest(BaseModel):
     @field_validator("email")
     @classmethod
     def normalize_email(cls, value: str) -> str:
-        normalized = value.strip().lower()
-        if re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", normalized) is None:
-            raise ValueError("Enter a valid email address")
-        return normalized
+        return normalize_email(value, required=True) or ""
 
 
 class UserRead(BaseModel):
@@ -42,9 +37,13 @@ class UserRead(BaseModel):
 
     id: UUID
     team_id: UUID
+    manager_id: UUID | None
     full_name: str
     email: str
     phone: str | None
+    phone_country_code: str | None
+    phone_region: str | None
+    phone_national_number: str | None
     role: UserRole
     is_superuser: bool
     can_read: bool
@@ -82,6 +81,7 @@ class UserCreateRequest(BaseModel):
     full_name: str = Field(min_length=1, max_length=160)
     email: str = Field(min_length=3, max_length=320)
     role: UserRole
+    manager_id: UUID | None = None
     can_read: bool | None = None
     can_write: bool | None = None
     can_delete: bool | None = None
@@ -90,24 +90,19 @@ class UserCreateRequest(BaseModel):
     @field_validator("full_name")
     @classmethod
     def normalize_full_name(cls, value: str) -> str:
-        normalized = value.strip()
-        if not normalized:
-            raise ValueError("Name must not be blank")
-        return normalized
+        return normalize_person_name(value)
 
     @field_validator("email")
     @classmethod
     def normalize_email(cls, value: str) -> str:
-        normalized = value.strip().lower()
-        if re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", normalized) is None:
-            raise ValueError("Enter a valid email address")
-        return normalized
+        return normalize_email(value, required=True) or ""
 
 
 class UserUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     full_name: str | None = Field(default=None, min_length=1, max_length=160)
+    manager_id: UUID | None = None
     role: UserRole | None = None
     is_active: bool | None = None
     can_read: bool | None = None
@@ -120,24 +115,11 @@ class UserUpdateRequest(BaseModel):
     def normalize_full_name(cls, value: str | None) -> str | None:
         if value is None:
             return None
-        normalized = value.strip()
-        if not normalized:
-            raise ValueError("Name must not be blank")
-        return normalized
+        return normalize_person_name(value)
 
 
-class ProfileUpdateRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    phone: str | None = Field(default=None, max_length=32)
-
-    @field_validator("phone")
-    @classmethod
-    def normalize_phone(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        normalized = value.strip()
-        return normalized or None
+class ProfileUpdateRequest(PhoneFields):
+    pass
 
 
 class BulkPasswordResetRequest(BaseModel):

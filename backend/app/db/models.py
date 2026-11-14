@@ -150,20 +150,31 @@ class User(TimestampMixin, Base):
     __tablename__ = "users"
     __table_args__ = (
         UniqueConstraint("id", "team_id", name="uq_users_id_team"),
+        ForeignKeyConstraint(
+            ["manager_id", "team_id"],
+            ["users.id", "users.team_id"],
+            name="fk_users_manager_team",
+            ondelete="RESTRICT",
+        ),
         CheckConstraint(
             "email = lower(trim(email))", name="ck_users_email_normalized"
         ),
         Index("uq_users_email_lower", func.lower(text("email")), unique=True),
         Index("ix_users_team_role", "team_id", "role"),
+        Index("ix_users_manager_id", "manager_id"),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     team_id: Mapped[UUID] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("teams.id", ondelete="RESTRICT"), nullable=False
     )
+    manager_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
     full_name: Mapped[str] = mapped_column(String(160), nullable=False)
     email: Mapped[str] = mapped_column(String(320), nullable=False)
     phone: Mapped[str | None] = mapped_column(String(32))
+    phone_country_code: Mapped[str | None] = mapped_column(String(5))
+    phone_region: Mapped[str | None] = mapped_column(String(2))
+    phone_national_number: Mapped[str | None] = mapped_column(String(20))
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[UserRole] = mapped_column(
         enum_type(UserRole, "user_role"), nullable=False
@@ -301,6 +312,9 @@ class Lead(TimestampMixin, Base):
     full_name: Mapped[str] = mapped_column(String(160), nullable=False)
     email: Mapped[str | None] = mapped_column(String(320))
     phone: Mapped[str | None] = mapped_column(String(40))
+    phone_country_code: Mapped[str | None] = mapped_column(String(5))
+    phone_region: Mapped[str | None] = mapped_column(String(2))
+    phone_national_number: Mapped[str | None] = mapped_column(String(20))
     source: Mapped[LeadSource] = mapped_column(
         enum_type(LeadSource, "lead_source"),
         nullable=False,
@@ -317,6 +331,7 @@ class Lead(TimestampMixin, Base):
     budget_max_inr: Mapped[int | None] = mapped_column(Integer)
     bhk: Mapped[int | None] = mapped_column(Integer)
     preferred_location: Mapped[str | None] = mapped_column(String(160))
+    location: Mapped[dict[str, object] | None] = mapped_column(JSON)
     notes: Mapped[str | None] = mapped_column(Text)
 
     team: Mapped[Team] = relationship(back_populates="leads", foreign_keys=[team_id])

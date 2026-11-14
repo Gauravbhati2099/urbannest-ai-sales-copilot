@@ -21,6 +21,7 @@ from app.core.dependencies import (
     DatabaseSession,
     is_team_record_manager,
 )
+from app.core.normalization import normalize_person_name
 from app.core.rate_limit import client_address, enforce_rate_limits, rate_limit_setting
 from app.db.models import (
     Activity,
@@ -39,7 +40,9 @@ from app.modules.leads.schemas import (
     ActivityRead,
     CSVImportResult,
     CSVRowError,
+    LeadAssigneeRead,
     LeadCreate,
+    LeadDuplicateCheck,
     LeadRead,
     LeadUpdate,
     PublicLeadCreate,
@@ -98,6 +101,64 @@ def get_active_team_member(
             detail="Assignee must be an active user in your team",
         )
     return assignee
+
+
+def validate_assignment_target(
+    session: Session,
+    user: User,
+    assigned_to: UUID,
+    *,
+    existing_assignee: User | None = None,
+) -> User:
+    assignee = get_active_team_member(session, user, assigned_to)
+    if assignee is None:
+        raise HTTPException(status_code=422, detail="Choose an active team member")
+    if user.is_superuser or user.role in {UserRole.OWNER, UserRole.CO_OWNER}:
+        return assignee
+    if user.role is UserRole.MANAGER:
+        if assignee.role is not UserRole.AGENT:
+            raise HTTPException(
+                status_code=403,
+                detail="Managers may assign leads only to active agents",
+            )
+        if assignee.manager_id != user.id:
+            raise HTTPException(
+                status_code=403,
+                detail="Managers may assign leads only to their active agents",
+            )
+        if existing_assignee is not None and (
+            existing_assignee.role in {UserRole.OWNER, UserRole.CO_OWNER}
+            or (
+                existing_assignee.role is UserRole.MANAGER
+                and existing_assignee.id != user.id
+            )
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="Only a higher-level user may change this lead's assignment",
+            )
+        return assignee
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+
+
+def _count_same_name_leads(session: Session, team_id: UUID, full_name: str) -> int:
+    candidate_pattern = "%".join(normalize_person_name(full_name).split())
+    names = session.scalars(
+        select(Lead.full_name).where(
+            Lead.team_id == team_id,
+            Lead.full_name.ilike(candidate_pattern),
+        )
+    )
+    target = normalize_person_name(full_name).casefold()
+    duplicate_count = 0
+    for name in names:
+        try:
+            matches = normalize_person_name(name).casefold() == target
+        except ValueError:
+            matches = False
+        if matches:
+            duplicate_count += 1
+    return duplicate_count
 
 
 def _validate_budget_range(minimum: int | None, maximum: int | None) -> None:
@@ -281,19 +342,74 @@ def list_leads(
     return list(session.scalars(statement.limit(limit).offset(offset)).all())
 
 
+@router.get("/assignees", response_model=list[LeadAssigneeRead])
+def list_lead_assignees(
+    current_user: CurrentUser,
+    session: DatabaseSession,
+) -> list[User]:
+    """Return only the active team members this user is permitted to assign."""
+    if current_user.is_superuser or current_user.role in {UserRole.OWNER, UserRole.CO_OWNER}:
+        roles = None
+    elif current_user.role is UserRole.MANAGER:
+        roles = {UserRole.AGENT}
+    else:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    statement = select(User).where(
+        User.team_id == current_user.team_id,
+        User.is_active.is_(True),
+    )
+    if roles is not None:
+        statement = statement.where(User.role.in_(roles))
+    if current_user.role is UserRole.MANAGER and not current_user.is_superuser:
+        statement = statement.where(User.manager_id == current_user.id)
+    return list(session.scalars(statement.order_by(User.full_name, User.email)).all())
+
+
+@router.get("/duplicates", response_model=LeadDuplicateCheck)
+def check_lead_duplicates(
+    full_name: Annotated[str, Query(min_length=1, max_length=160)],
+    current_user: CurrentUser,
+    session: DatabaseSession,
+) -> LeadDuplicateCheck:
+    """Check for a same-name lead without revealing its contact information."""
+    try:
+        normalized_name = normalize_person_name(full_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return LeadDuplicateCheck(
+        duplicate_count=_count_same_name_leads(
+            session, current_user.team_id, normalized_name
+        )
+    )
+
+
 @router.post("", response_model=LeadRead, status_code=status.HTTP_201_CREATED)
 def create_lead(
     payload: LeadCreate, current_user: CurrentUser, session: DatabaseSession
 ) -> Lead:
     """Create a lead; agents can only assign new leads to themselves."""
     _validate_budget_range(payload.budget_min_inr, payload.budget_max_inr)
+    duplicate_count = _count_same_name_leads(
+        session, current_user.team_id, payload.full_name
+    )
+    if duplicate_count and not payload.allow_duplicate:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "duplicate_lead",
+                "message": "A lead with this name already exists",
+                "duplicate_count": duplicate_count,
+            },
+        )
     assigned_to = payload.assigned_to
-    if current_user.role is UserRole.AGENT:
+    if current_user.role is UserRole.AGENT and not current_user.is_superuser:
         if assigned_to is not None and assigned_to != current_user.id:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
         assigned_to = current_user.id
-    elif assigned_to is not None:
-        get_active_team_member(session, current_user, assigned_to)
+    elif assigned_to is None:
+        assigned_to = current_user.id
+    else:
+        validate_assignment_target(session, current_user, assigned_to)
 
     lead = Lead(
         team_id=current_user.team_id,
@@ -302,12 +418,16 @@ def create_lead(
         full_name=payload.full_name,
         email=payload.email,
         phone=payload.phone,
+        phone_country_code=payload.phone_country_code,
+        phone_region=payload.phone_region,
+        phone_national_number=payload.phone_national_number,
         source=payload.source,
         status=payload.status,
         budget_min_inr=payload.budget_min_inr,
         budget_max_inr=payload.budget_max_inr,
         bhk=payload.bhk,
         preferred_location=payload.preferred_location,
+        location=payload.location.model_dump() if payload.location else None,
         notes=payload.notes,
     )
     session.add(lead)
@@ -354,22 +474,51 @@ def update_lead(
     nullable_fields = {
         "email",
         "phone",
+        "phone_country_code",
+        "phone_region",
+        "phone_national_number",
         "budget_min_inr",
         "budget_max_inr",
         "bhk",
         "preferred_location",
+        "location",
         "notes",
         "assigned_to",
     }
+    if set(
+        ("phone", "phone_country_code", "phone_region", "phone_national_number")
+    ).intersection(payload.model_fields_set):
+        for field in (
+            "phone",
+            "phone_country_code",
+            "phone_region",
+            "phone_national_number",
+        ):
+            changes[field] = getattr(payload, field)
+    if "location" in payload.model_fields_set:
+        changes["location"] = (
+            payload.location.model_dump() if payload.location is not None else None
+        )
+        changes["preferred_location"] = (
+            payload.preferred_location if payload.location is not None else None
+        )
+    elif "preferred_location" in payload.model_fields_set:
+        changes["location"] = None
     if any(value is None and key not in nullable_fields for key, value in changes.items()):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Required lead fields cannot be null",
         )
     if "assigned_to" in changes:
-        if not is_team_record_manager(current_user):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
-        get_active_team_member(session, current_user, changes["assigned_to"])
+        existing_assignee = (
+            session.get(User, lead.assigned_to) if lead.assigned_to is not None else None
+        )
+        validate_assignment_target(
+            session,
+            current_user,
+            changes["assigned_to"],
+            existing_assignee=existing_assignee,
+        )
 
     new_minimum = changes.get("budget_min_inr", lead.budget_min_inr)
     new_maximum = changes.get("budget_max_inr", lead.budget_max_inr)
@@ -409,6 +558,7 @@ def update_lead(
             "budget_max_inr",
             "bhk",
             "preferred_location",
+            "location",
             "notes",
         }
     ):
@@ -627,11 +777,9 @@ async def import_leads_csv(
         try:
             payload = _parse_csv_row(row)
             _validate_budget_range(payload.budget_min_inr, payload.budget_max_inr)
-            assignee_id = payload.assigned_to or (
-                current_user.id if current_user.role is UserRole.AGENT else None
-            )
-            if assignee_id is not None:
-                get_active_team_member(session, current_user, assignee_id)
+            assignee_id = payload.assigned_to or current_user.id
+            if payload.assigned_to is not None:
+                validate_assignment_target(session, current_user, assignee_id)
             imported.append(
                 Lead(
                     team_id=current_user.team_id,
@@ -640,12 +788,16 @@ async def import_leads_csv(
                     full_name=payload.full_name,
                     email=payload.email,
                     phone=payload.phone,
+                    phone_country_code=payload.phone_country_code,
+                    phone_region=payload.phone_region,
+                    phone_national_number=payload.phone_national_number,
                     source=payload.source,
                     status=payload.status,
                     budget_min_inr=payload.budget_min_inr,
                     budget_max_inr=payload.budget_max_inr,
                     bhk=payload.bhk,
                     preferred_location=payload.preferred_location,
+                    location=payload.location.model_dump() if payload.location else None,
                     notes=payload.notes,
                 )
             )
@@ -737,12 +889,16 @@ def create_public_lead(
         full_name=payload.full_name,
         email=payload.email,
         phone=payload.phone,
+        phone_country_code=payload.phone_country_code,
+        phone_region=payload.phone_region,
+        phone_national_number=payload.phone_national_number,
         source=LeadSource.WEBSITE,
         status=LeadStatus.NEW,
         budget_min_inr=payload.budget_min_inr,
         budget_max_inr=payload.budget_max_inr,
         bhk=payload.bhk,
         preferred_location=payload.preferred_location,
+        location=payload.location.model_dump() if payload.location else None,
     )
     session.add(lead)
     session.flush()

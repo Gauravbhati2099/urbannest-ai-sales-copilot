@@ -368,6 +368,23 @@ h1, h2, h3, p { margin-top: 0; }
 .lead-form textarea { resize: vertical; }
 .lead-form input::placeholder, .lead-form textarea::placeholder, .auth-form input::placeholder { color: #aab3ac; }
 .lead-form input:focus, .lead-form select:focus, .lead-form textarea:focus, .auth-form input:focus { border-color: #9dbba5; box-shadow: 0 0 0 3px rgba(73,132,91,.08); }
+.phone-number-inputs { display: grid; grid-template-columns: minmax(108px, .8fr) minmax(0, 1.2fr); gap: 8px; }
+.phone-number-field .inline-form-error,
+.location-autocomplete .inline-form-error { font-size: 10px; font-weight: 400; }
+.location-autocomplete { position: relative; }
+.location-suggestions { position: absolute; z-index: 20; top: 100%; left: 0; width: 100%; max-height: 220px; overflow-y: auto; margin: 4px 0 0; padding: 4px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); box-shadow: var(--shadow); list-style: none; }
+.location-suggestions button { display: flex; width: 100%; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 9px; border: 0; border-radius: 5px; color: var(--ink); background: transparent; text-align: left; cursor: pointer; }
+.location-suggestions button:hover,
+.location-suggestions button:focus-visible { background: var(--green-soft); outline: none; }
+.location-suggestions strong { font-size: 11px; font-weight: 500; }
+.location-suggestions small,
+.location-search-state,
+.location-attribution { color: var(--muted); font-size: 9px; font-weight: 400; }
+.location-search-error { display: flex; align-items: center; gap: 8px; color: #a64f43; font-size: 10px; font-weight: 400; }
+.location-search-error button { border: 0; color: var(--green-dark); background: transparent; text-decoration: underline; cursor: pointer; }
+.duplicate-lead-prompt { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px; border: 1px solid #e8c99a; border-radius: 8px; color: #795a2d; background: #fff8e9; }
+.duplicate-lead-prompt p { margin: 0; font-size: 11px; line-height: 1.5; }
+.duplicate-lead-prompt > div { display: flex; flex-shrink: 0; gap: 8px; }
 .form-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 5px; padding-top: 14px; border-top: 1px solid #edf0ed; }
 .form-footer > div { display: flex; gap: 7px; }
 .form-hint { max-width: 230px; color: #a2aca5; font-size: 8px; line-height: 1.5; }

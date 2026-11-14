@@ -60,10 +60,24 @@ Use **Refresh** to request the latest workspace data.
 1. Select **Add lead** if your role has write access.
 2. Enter the details you have. Email, phone, budget, bedrooms, location, and
    notes are optional; the lead name is required.
-3. Save the lead. Use only accurate, necessary information and follow your
-   organization's privacy practices.
-4. Open a lead to update its pipeline stage, log a call or other interaction,
+3. Names are trimmed and formatted in Title Case; emails are trimmed and
+   lowercased. Phone numbers use a country selector and are checked against
+   that country's numbering rules before saving.
+4. Search for a location and select one of the verified suggestions. An
+   unselected typed location is not saved. Suggestions use Photon with
+   OpenStreetMap data; attribution appears below the field.
+5. If another lead already has the same normalized name, the app asks whether
+   you want to create a separate record. Use only accurate, necessary
+   information and follow your organization's privacy practices.
+6. Open a lead to update its pipeline stage, log a call or other interaction,
    or add a follow-up.
+
+Owners and co-owners can assign a lead to any active team member. Managers can
+assign leads only to agents who report directly to them; agents are assigned
+their own new leads by default. A manager-created lead is assigned to that
+manager unless an eligible agent is selected. Owners can link agents to a
+manager from **Team** using the **Reports to** control; existing agents without
+a manager link are not available to managers for assignment until linked.
 
 ### Import a CSV or Excel spreadsheet
 
@@ -74,6 +88,12 @@ must use the API's column names:
 - Required: `full_name`
 - Optional: `email`, `phone`, `source`, `status`, `budget_min_inr`,
   `budget_max_inr`, `bhk`, `preferred_location`, `notes`, `assigned_to`
+
+Names and emails are normalized on import. Phone values must be valid; provide
+an international number with its country prefix, or a national number for the
+configured default region. Locations imported as text remain legacy free-text
+values; use the lead form's location suggestions to save structured,
+geocoded location data.
 
 Header names are case-insensitive, but every column must be supported and
 unique. Use whole numbers for budgets in INR and for `bhk`. Files may be at most

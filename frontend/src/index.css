@@ -2,27 +2,27 @@
 
 :root {
   font-family: 'DM Sans', 'Segoe UI', sans-serif;
-  color: #23322d;
-  background: #f7f8f6;
+  color: #252d28;
+  background: #f6f6f2;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   font-optical-sizing: auto;
   font-weight: 400;
-  --ink: #20302b;
-  --muted: #8a9690;
-  --line: #e9ede9;
-  --green: #2f7258;
-  --green-dark: #235a45;
-  --green-soft: #e9f2ed;
+  --ink: #252d28;
+  --muted: #6d776f;
+  --line: #e3e6e0;
+  --green: #356c50;
+  --green-dark: #28543d;
+  --green-soft: #edf2eb;
   --paper: #fff;
-  --canvas: #f7f8f6;
-  --discordant: #ed765c;
-  --scroll-thumb: #b8c8bc;
-  --scroll-track: #eef2ee;
-  --chart-empty: #dfe6e0;
-  --shadow: 0 12px 35px rgba(32, 48, 43, .07);
+  --canvas: #f6f6f2;
+  --discordant: #b56650;
+  --scroll-thumb: #b9c3ba;
+  --scroll-track: #eff0ec;
+  --chart-empty: #e5e8e2;
+  --shadow: 0 8px 24px rgba(35, 45, 38, .06);
 }
 
 * { box-sizing: border-box; }
@@ -31,9 +31,9 @@
 ::-webkit-scrollbar-track { background: var(--scroll-track); }
 ::-webkit-scrollbar-thumb { border: 2px solid var(--scroll-track); border-radius: 9px; background: var(--scroll-thumb); }
 ::-webkit-scrollbar-thumb:hover { background: var(--green); }
-body { margin: 0; min-width: 320px; min-height: 100vh; }
+body { margin: 0; min-width: 320px; min-height: 100vh; background: var(--canvas); }
 button, input, select, textarea { font: inherit; }
 button { cursor: pointer; }
-button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 3px solid rgba(47, 114, 88, .22); outline-offset: 2px; }
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 3px solid rgba(53, 108, 80, .3); outline-offset: 2px; }
 a { color: inherit; }
-::selection { color: #fff; background: #54856f; }
+::selection { color: #fff; background: #356c50; }

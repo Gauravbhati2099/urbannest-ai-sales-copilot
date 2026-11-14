@@ -32,7 +32,10 @@ function LegalPageFrame({ children, onBack }: { children: ReactNode; onBack: () 
         <button className="button button-secondary" onClick={onBack}><ArrowLeft size={16} /> Back</button>
       </header>
       <div className="legal-content">{children}</div>
-      <footer className="legal-page-footer">UrbanNest Realty CRM</footer>
+      <footer className="legal-page-footer">
+        <span>UrbanNest Realty CRM</span>
+        <a href="https://www.urbanestrealty.in/" target="_blank" rel="noopener noreferrer">UrbanNest Realty website</a>
+      </footer>
     </main>
   )
 }

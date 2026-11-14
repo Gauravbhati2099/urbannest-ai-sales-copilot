@@ -133,6 +133,15 @@ and delete it when no longer needed.
 
 > **Screenshot placeholder - Team access:** Add the team management image here.
 
+### Explore the organization chart
+
+Every signed-in team member can open **Org chart** from the sidebar to explore
+active team roles and reporting lines. Search by a person's name or role, select
+a card to view its reporting details, and expand or collapse branches as needed.
+Contact details are not shown on this page.
+
+> **Screenshot placeholder - Org chart explorer:** Add the org chart image here.
+
 ## 7. Profile, theme, and navigation
 
 - Open your profile from the account area to update supported profile details
@@ -142,6 +151,8 @@ and delete it when no longer needed.
 - Use **Privacy policy** or **Cookie and storage choices** in the workspace
   footer to review the service's data handling and update your browser-storage
   choice.
+- Use **UrbanNest Realty website** in the footer to open the company website in
+  a new tab.
 - Refreshing the browser restores the current workspace section for the current
   tab. Signing out clears that section so the next sign-in starts at Overview.
 

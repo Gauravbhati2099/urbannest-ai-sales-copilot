@@ -13,6 +13,7 @@ import {
   Eye,
   EyeOff,
   LayoutDashboard,
+  Network,
   KeyRound,
   LogOut,
   MapPin,
@@ -47,6 +48,7 @@ import {
   type LeadStatus,
   type LocationSelection,
   type LoginResponse,
+  type OrgChartMember,
   type PasswordResetResponse,
   type Task,
   type User,
@@ -65,7 +67,7 @@ import { CookieConsentBanner, PrivacyPolicyPage, StoragePreferencesPage, type Le
 import { inspectLeadImportFile, LEAD_IMPORT_COLUMNS, type LeadImportPreflight } from './lead-import'
 import './App.css'
 
-type Page = 'overview' | 'leads' | 'tasks' | 'activity' | 'team' | 'profile'
+type Page = 'overview' | 'leads' | 'tasks' | 'activity' | 'team' | 'org-chart' | 'profile'
 type Theme = 'light' | 'dark'
 type LeadSortKey = 'name' | 'contact' | 'requirement' | 'source' | 'stage' | 'added'
 type SortDirection = 'ascending' | 'descending'
@@ -107,6 +109,7 @@ function readWorkspacePage(): Page {
     case 'tasks':
     case 'activity':
     case 'team':
+    case 'org-chart':
     case 'profile':
       return page
     default:
@@ -245,6 +248,7 @@ function App() {
   const [authRetryCount, setAuthRetryCount] = useState(0)
   const [legalPage, setLegalPage] = useState<LegalPageKind | null>(readLegalPage)
   const [page, setPage] = useState<Page>(readWorkspacePage)
+  const [orgChartMembers, setOrgChartMembers] = useState<OrgChartMember[]>([])
   const [workspace, dispatch] = useReducer(workspaceReducer, initialWorkspaceState)
   const { dashboard, leads, tasks, completedTasks, teamUsers, auditEvents, unreadCount, loading, error, apiConnected, importErrors } = workspace
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => storageConsent === 'all'
@@ -415,7 +419,7 @@ function App() {
     || user.role === 'manager'
     || (user.role === 'co_owner' && user.can_manage_users)
   ))
-  const activePage = !canReadWorkspace && page !== 'team' && page !== 'profile'
+  const activePage = !canReadWorkspace && page !== 'team' && page !== 'org-chart' && page !== 'profile'
     ? canManageTeam ? 'team' : 'profile'
     : page
 
@@ -427,9 +431,15 @@ function App() {
     dispatch({ type: 'refresh-started' })
     try {
       if (!canReadWorkspace) {
-        const users = canManageTeam
-          ? await api<User[]>('/users?limit=100', token, { signal: controller.signal })
-          : []
+        const [users, orgChart] = await Promise.all([
+          canManageTeam
+            ? api<User[]>('/users?limit=100', token, { signal: controller.signal })
+            : Promise.resolve([]),
+          page === 'org-chart'
+            ? api<OrgChartMember[]>('/users/org-chart', token, { signal: controller.signal })
+            : Promise.resolve(null),
+        ])
+        if (orgChart) setOrgChartMembers(orgChart)
         dispatch({
           type: 'refresh-succeeded',
           dashboard: null,
@@ -449,14 +459,19 @@ function App() {
       const usersRequest = canManageTeam
         ? api<User[]>('/users?limit=100', token, requestOptions)
         : Promise.resolve([])
-      const [summary, leadRows, taskRows, completedTaskRows, feed, users] = await Promise.all([
+      const orgChartRequest = page === 'org-chart'
+        ? api<OrgChartMember[]>('/users/org-chart', token, requestOptions)
+        : Promise.resolve(null)
+      const [summary, leadRows, taskRows, completedTaskRows, feed, users, orgChart] = await Promise.all([
         api<Dashboard>('/dashboard/summary', token, requestOptions),
         api<Lead[]>(`/leads?${params.toString()}`, token, requestOptions),
         api<Task[]>('/tasks?limit=100', token, requestOptions),
         api<Task[]>('/tasks?status=completed&limit=100', token, requestOptions),
         api<{ events: AuditEvent[]; unread_count: number }>('/audit/events?limit=8', token, requestOptions),
         usersRequest,
+        orgChartRequest,
       ])
+      if (orgChart) setOrgChartMembers(orgChart)
       dispatch({
         type: 'refresh-succeeded',
         dashboard: summary,
@@ -478,7 +493,7 @@ function App() {
     } finally {
       if (refreshControllerRef.current === controller) refreshControllerRef.current = null
     }
-  }, [canManageTeam, canReadWorkspace, debouncedQuery, signOut, statusFilter, token])
+  }, [canManageTeam, canReadWorkspace, debouncedQuery, page, signOut, statusFilter, token])
 
   useEffect(() => {
     // eslint-disable-next-line react/set-state-in-effect -- Synchronizes server data with auth and search filters.
@@ -491,6 +506,7 @@ function App() {
     tasks: 'Follow-ups',
     activity: 'Activity',
     team: 'Team',
+    'org-chart': 'Org chart explorer',
     profile: 'My profile',
   }[activePage]
 
@@ -757,6 +773,7 @@ function App() {
             <NavButton label="Activity" icon={<ActivityIcon size={18} />} active={activePage === 'activity'} onClick={() => { setPage('activity'); setMobileNavOpen(false) }}>Activity{unreadCount > 0 && <span className="nav-count">{unreadCount > 9 ? '9+' : unreadCount}</span>}</NavButton>
           </>}
           {canManageTeam && <NavButton label="Team" icon={<UserRound size={18} />} active={activePage === 'team'} onClick={() => { setPage('team'); setMobileNavOpen(false) }}>Team</NavButton>}
+          <NavButton label="Org chart" icon={<Network size={18} />} active={activePage === 'org-chart'} onClick={() => { setPage('org-chart'); setMobileNavOpen(false) }}>Org chart</NavButton>
         </nav>
 
         <div className="sidebar-bottom">
@@ -809,7 +826,7 @@ function App() {
             <div>
               <p className="eyebrow">{formatDate(renderTime.toISOString(), { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
               <h1>{activePage === 'overview' ? 'Sales overview' : pageTitle}</h1>
-              <p className="heading-subtitle">{activePage === 'overview' ? 'A clear view of your leads and next steps' : activePage === 'leads' ? 'Track each enquiry from first contact to decision' : activePage === 'tasks' ? 'Keep client conversations moving with timely follow-ups' : activePage === 'activity' ? 'Changes across leads, follow-ups, and your team' : activePage === 'team' ? 'Manage team access and account setup' : 'Your account details and sign-in security'}</p>
+              <p className="heading-subtitle">{activePage === 'overview' ? 'A clear view of your leads and next steps' : activePage === 'leads' ? 'Track each enquiry from first contact to decision' : activePage === 'tasks' ? 'Keep client conversations moving with timely follow-ups' : activePage === 'activity' ? 'Changes across leads, follow-ups, and your team' : activePage === 'team' ? 'Manage team access and account setup' : activePage === 'org-chart' ? 'Explore your active team and reporting lines' : 'Your account details and sign-in security'}</p>
             </div>
             <div className="heading-actions">
               <button className="button button-secondary refresh-button" onClick={() => void refresh()} disabled={loading}><RefreshCw size={16} className={loading ? 'spinning' : ''} /><span>Refresh</span></button>
@@ -823,7 +840,7 @@ function App() {
               : <AppFailureScreen kind="server" onRetry={() => void refresh()} />
             : (
             <>
-              {!canReadWorkspace && activePage !== 'team' && activePage !== 'profile' && (
+              {!canReadWorkspace && activePage !== 'team' && activePage !== 'org-chart' && activePage !== 'profile' && (
                 <EmptyState title="Workspace access is disabled" description="Your current role does not have permission to read CRM records." />
               )}
               {canReadWorkspace && activePage === 'overview' && (
@@ -837,6 +854,7 @@ function App() {
               )}
               {canReadWorkspace && activePage === 'activity' && <ActivityPage events={auditEvents} unreadCount={unreadCount} onMarkRead={requestMarkRead} onOpenEvent={(event) => void openAuditEvent(event)} />}
               {activePage === 'team' && canManageTeam && <TeamPage currentUser={user} users={teamUsers} temporaryPassword={temporaryPassword} onClearTemporaryPassword={() => setTemporaryPassword(null)} onCreate={createTeamUser} onUpdate={updateTeamUser} onResetPassword={resetTeamUserPassword} onError={setError} onConfirmAction={setConfirmation} onResetAll={resetAllUserPasswords} />}
+              {activePage === 'org-chart' && <OrgChartPage members={orgChartMembers} loading={loading} error={error} onRetry={() => void refresh()} />}
               {activePage === 'profile' && <ProfilePage user={user} onChangePassword={changeOwnPassword} onSaveProfile={updateOwnProfile} onConfirmAction={setConfirmation} />}
             </>
           )}
@@ -844,6 +862,7 @@ function App() {
         <footer className="app-legal-footer">
           <span>UrbanNest Realty CRM</span>
           <div>
+            <a href="https://www.urbanestrealty.in/" target="_blank" rel="noopener noreferrer">UrbanNest Realty website</a>
             <button onClick={() => openLegalPage('privacy')}>Privacy policy</button>
             <button onClick={() => openLegalPage('cookies')}>Cookie and storage choices</button>
           </div>
@@ -1082,6 +1101,7 @@ function LoginScreen({ onLogin, error, setError, theme, onToggleTheme, onOpenPri
           <span>© {CURRENT_YEAR} UrbanNest Realty</span>
           <span>Questions? Ask your team owner.</span>
           <div className="auth-legal-links">
+            <a href="https://www.urbanestrealty.in/" target="_blank" rel="noopener noreferrer">UrbanNest Realty website</a>
             <button onClick={onOpenPrivacy}>Privacy</button>
             <button onClick={onOpenCookieSettings}>Storage choices</button>
           </div>
@@ -1774,6 +1794,179 @@ function TeamPage({ currentUser, users, temporaryPassword, onClearTemporaryPassw
     </div>
     <p className="team-access-note">Access controls are enforced by the API. Managers and user-enabled co-owners manage agents; only owners can create managers or co-owners.</p>
   </section>
+}
+
+type OrgChartTreeNode = {
+  id: string
+  name: string
+  detail: string
+  kind: 'company' | 'group' | 'person'
+  role?: UserRole
+  children: OrgChartTreeNode[]
+}
+
+function orgRoleLabel(role: UserRole) {
+  return role === 'co_owner' ? 'Co-owner' : role === 'owner' ? 'Owner' : role === 'manager' ? 'Manager' : 'Agent'
+}
+
+function buildOrgChartTree(members: OrgChartMember[]): OrgChartTreeNode {
+  const memberNodes = new Map<string, OrgChartTreeNode>()
+  for (const member of members) {
+    memberNodes.set(member.id, {
+      id: member.id,
+      name: member.full_name,
+      detail: orgRoleLabel(member.role),
+      kind: 'person',
+      role: member.role,
+      children: [],
+    })
+  }
+
+  const leadership: OrgChartTreeNode[] = []
+  const managers: OrgChartTreeNode[] = []
+  for (const member of members) {
+    const node = memberNodes.get(member.id)
+    if (!node) continue
+    if (member.role === 'owner' || member.role === 'co_owner') leadership.push(node)
+    if (member.role === 'manager') managers.push(node)
+  }
+  const assignedAgents = new Set<string>()
+
+  for (const manager of managers) {
+    manager.children = members
+      .filter((member) => member.role === 'agent' && member.manager_id === manager.id)
+      .flatMap((member) => {
+        const node = memberNodes.get(member.id)
+        if (!node) return []
+        assignedAgents.add(member.id)
+        return [node]
+      })
+    manager.detail = `${orgRoleLabel('manager')} · ${manager.children.length} direct report${manager.children.length === 1 ? '' : 's'}`
+  }
+
+  const unassignedAgents = members
+    .filter((member) => member.role === 'agent' && !assignedAgents.has(member.id))
+    .flatMap((member) => {
+      const node = memberNodes.get(member.id)
+      return node ? [node] : []
+    })
+  const children: OrgChartTreeNode[] = []
+  if (leadership.length) children.push({ id: 'leadership', name: 'Leadership', detail: `${leadership.length} member${leadership.length === 1 ? '' : 's'}`, kind: 'group', children: leadership })
+  if (managers.length) children.push({ id: 'managers', name: 'Managers', detail: `${managers.length} member${managers.length === 1 ? '' : 's'}`, kind: 'group', children: managers })
+  if (unassignedAgents.length) children.push({ id: 'unassigned-agents', name: 'Agents without a manager', detail: `${unassignedAgents.length} member${unassignedAgents.length === 1 ? '' : 's'}`, kind: 'group', children: unassignedAgents })
+
+  return {
+    id: 'organization',
+    name: 'UrbanNest Realty',
+    detail: `${members.length} active team member${members.length === 1 ? '' : 's'}`,
+    kind: 'company',
+    children,
+  }
+}
+
+function filterOrgChartTree(node: OrgChartTreeNode, query: string): OrgChartTreeNode | null {
+  if (!query) return node
+  const children = node.children
+    .map((child) => filterOrgChartTree(child, query))
+    .filter((child): child is OrgChartTreeNode => child !== null)
+  const matches = `${node.name} ${node.detail}`.toLowerCase().includes(query)
+  return matches || children.length ? { ...node, children } : null
+}
+
+function flattenOrgChartTree(node: OrgChartTreeNode): OrgChartTreeNode[] {
+  return [node, ...node.children.flatMap(flattenOrgChartTree)]
+}
+
+function OrgChartPage({ members, loading, error, onRetry }: {
+  members: OrgChartMember[]
+  loading: boolean
+  error: string
+  onRetry: () => void
+}) {
+  const [query, setQuery] = useState('')
+  const [selectedId, setSelectedId] = useState('organization')
+  const [expandedIds, setExpandedIds] = useState<Set<string> | null>(null)
+  const tree = useMemo(() => buildOrgChartTree(members), [members])
+  const filteredTree = useMemo(() => filterOrgChartTree(tree, query.trim().toLowerCase()), [query, tree])
+  const visibleTree = filteredTree ?? { ...tree, children: [] }
+  const selectedNode = flattenOrgChartTree(visibleTree).find((node) => node.id === selectedId) ?? visibleTree
+  const selectedMember = selectedNode.kind === 'person' ? members.find((member) => member.id === selectedNode.id) : null
+  const selectedManager = selectedMember?.manager_id
+    ? members.find((member) => member.id === selectedMember.manager_id)
+    : null
+  const selectedReportCount = selectedNode.kind === 'person' ? selectedNode.children.length : 0
+
+  const renderNode = (node: OrgChartTreeNode): React.ReactNode => {
+    const expanded = expandedIds === null || expandedIds.has(node.id)
+    return (
+      <li className={`org-chart-node org-chart-node-${node.kind}`} role="treeitem" aria-expanded={node.children.length ? expanded : undefined} key={node.id}>
+        <div className={`org-chart-node-row ${selectedId === node.id ? 'org-chart-node-selected' : ''}`}>
+          <button type="button" className="org-chart-node-select" aria-pressed={selectedId === node.id} onClick={() => setSelectedId(node.id)}>
+            <span className="org-chart-node-icon">{node.kind === 'company' ? <Network size={18} /> : node.kind === 'group' ? <Users size={17} /> : <UserRound size={17} />}</span>
+            <span className="org-chart-node-copy"><strong>{node.name}</strong><small>{node.detail}</small></span>
+          </button>
+          {node.children.length > 0 && <button
+            type="button"
+            className="org-chart-node-toggle"
+            aria-label={`${expanded ? 'Collapse' : 'Expand'} ${node.name}`}
+            aria-expanded={expanded}
+            onClick={() => setExpandedIds((current) => {
+              const next = current ? new Set(current) : new Set(flattenOrgChartTree(visibleTree).map((item) => item.id))
+              if (expanded) next.delete(node.id)
+              else next.add(node.id)
+              return next
+            })}
+          ><ChevronDown size={16} className={expanded ? '' : 'org-chart-chevron-collapsed'} /></button>}
+        </div>
+        {node.children.length > 0 && expanded && <ul className="org-chart-children" role="group">{node.children.map(renderNode)}</ul>}
+      </li>
+    )
+  }
+
+  if (loading && members.length === 0) {
+    return <div className="org-chart-state" role="status"><span className="spinning"><RefreshCw size={18} /></span><p>Loading your team structure…</p></div>
+  }
+  if (error && members.length === 0) {
+    return <EmptyState title="Could not load the org chart" description={error} action={<button className="button button-secondary" onClick={onRetry}>Try again</button>} />
+  }
+  if (!members.length) {
+    return <EmptyState title="No active team members" description="Active team accounts will appear here as the organization grows." />
+  }
+
+  return (
+    <section className="org-chart-explorer">
+      <div className="org-chart-toolbar">
+        <label className="org-chart-search">
+          <Search size={17} />
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Find a person or role" aria-label="Search the org chart" />
+          {query && <button type="button" aria-label="Clear search" onClick={() => setQuery('')}><X size={15} /></button>}
+        </label>
+        <div className="org-chart-actions">
+          <button type="button" className="button button-secondary" onClick={() => setExpandedIds(new Set(flattenOrgChartTree(visibleTree).map((node) => node.id)))}>Expand all</button>
+          <button type="button" className="button button-secondary" onClick={() => setExpandedIds(new Set())}>Collapse all</button>
+        </div>
+      </div>
+      {error && <p className="org-chart-stale-note" role="status">Showing the last loaded org chart. Refresh to try again.</p>}
+      <div className="org-chart-layout">
+        <div className="org-chart-canvas">
+          {filteredTree
+            ? <ul className="org-chart-tree" role="tree" aria-label="Active team organization">{renderNode(visibleTree)}</ul>
+            : <EmptyState title="No matching team members" description="Try a different name or role." />}
+        </div>
+        <aside className="org-chart-details" aria-live="polite">
+          <p className="eyebrow">Explorer</p>
+          <h2>{selectedNode.name}</h2>
+          <p>{selectedNode.detail}</p>
+          {selectedMember && <>
+            <div className="org-chart-fact"><span>Role</span><strong>{orgRoleLabel(selectedMember.role)}</strong></div>
+            {selectedMember.role === 'agent' && <div className="org-chart-fact"><span>Reports to</span><strong>{selectedManager?.full_name ?? 'No manager assigned'}</strong></div>}
+            <div className="org-chart-fact"><span>Direct reports</span><strong>{selectedReportCount}</strong></div>
+          </>}
+          {selectedNode.kind !== 'person' && <div className="org-chart-fact"><span>Members in this branch</span><strong>{flattenOrgChartTree(selectedNode).filter((node) => node.kind === 'person').length}</strong></div>}
+        </aside>
+      </div>
+    </section>
+  )
 }
 
 function LeadDrawer({ lead: initialLead, token, currentUser, onClose, onUpdated, onError, onConfirmAction, canWrite }: { lead: Lead; token: string; currentUser: User; onClose: () => void; onUpdated: (lead: Lead) => void; onError: (message: string) => void; onConfirmAction: (request: ConfirmationRequest) => void; canWrite: boolean }) {

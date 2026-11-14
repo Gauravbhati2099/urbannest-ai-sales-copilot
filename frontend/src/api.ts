@@ -74,6 +74,13 @@ export interface LeadAssignee {
   role: UserRole
 }
 
+export interface OrgChartMember {
+  id: string
+  manager_id: string | null
+  full_name: string
+  role: UserRole
+}
+
 export interface LeadDuplicateCheck {
   duplicate_count: number
 }

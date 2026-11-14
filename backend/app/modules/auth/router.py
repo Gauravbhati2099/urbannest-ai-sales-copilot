@@ -37,6 +37,7 @@ from app.modules.auth.schemas import (
     BulkPasswordResetRequest,
     LoginRequest,
     LoginResponse,
+    OrgChartMemberRead,
     PasswordRecoveryRequest,
     PasswordRecoveryResponse,
     PasswordResetResponse,
@@ -360,6 +361,23 @@ def list_team_users(
             statement.order_by(User.full_name, User.email).limit(limit).offset(offset)
         ).all()
     )
+
+
+@users_router.get("/org-chart", response_model=list[OrgChartMemberRead])
+def get_org_chart(
+    current_user: CurrentUser,
+    session: DatabaseSession,
+) -> list[User]:
+    """Return active team roles and reporting links without exposing contact data."""
+    statement = (
+        select(User)
+        .where(
+            User.team_id == current_user.team_id,
+            User.is_active.is_(True),
+        )
+        .order_by(User.role, User.full_name, User.id)
+    )
+    return list(session.scalars(statement).all())
 
 
 @users_router.post("", response_model=UserCreatedResponse, status_code=201)

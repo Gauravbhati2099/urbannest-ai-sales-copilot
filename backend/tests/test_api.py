@@ -892,6 +892,50 @@ class APIAuthAndAuthorizationTests(unittest.TestCase):
         )
         self.assertEqual(manager_disable_manager.status_code, 404)
 
+    def test_org_chart_is_available_to_team_members_without_contact_data(self) -> None:
+        with self.session_factory.begin() as session:
+            restricted_co_owner = self.make_user(
+                session,
+                self.team.id,
+                "co-owner@example.test",
+                UserRole.CO_OWNER,
+                password_hash,
+            )
+            restricted_co_owner.can_read = False
+            co_owner_id = restricted_co_owner.id
+
+        agent_response = self.client.get(
+            "/api/v1/users/org-chart",
+            headers=self.headers("agent@example.test"),
+        )
+        self.assertEqual(agent_response.status_code, 200, agent_response.text)
+        agent_members = agent_response.json()
+        member_ids = {member["id"] for member in agent_members}
+        self.assertEqual(
+            member_ids,
+            {
+                str(self.owner_id),
+                str(self.manager_id),
+                str(self.agent_id),
+                str(self.other_agent_id),
+                str(co_owner_id),
+            },
+        )
+        self.assertEqual(
+            next(member for member in agent_members if member["id"] == str(self.agent_id))[
+                "manager_id"
+            ],
+            str(self.manager_id),
+        )
+        self.assertNotIn("email", agent_members[0])
+
+        co_owner_response = self.client.get(
+            "/api/v1/users/org-chart",
+            headers=self.headers("co-owner@example.test"),
+        )
+        self.assertEqual(co_owner_response.status_code, 200, co_owner_response.text)
+        self.assertEqual(len(co_owner_response.json()), 5)
+
     def test_audit_feed_visibility_is_shared_but_role_and_lead_scoped(self) -> None:
         events = [
             AuditEvent(

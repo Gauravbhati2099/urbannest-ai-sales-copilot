@@ -69,6 +69,8 @@ def get_current_user(
         path = request.url.path.rstrip("/")
         if path.endswith(("/auth/me", "/auth/me/profile", "/auth/change-password")):
             return user
+        if path.endswith("/users/org-chart") and request.method == "GET":
+            return user
         if (
             path.endswith("/leads/assignees")
             and request.method == "GET"

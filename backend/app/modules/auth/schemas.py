@@ -54,6 +54,15 @@ class UserRead(BaseModel):
     must_change_password: bool
 
 
+class OrgChartMemberRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    manager_id: UUID | None
+    full_name: str
+    role: UserRole
+
+
 class LoginResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"

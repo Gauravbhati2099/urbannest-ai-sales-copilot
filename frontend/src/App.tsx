@@ -11,6 +11,8 @@ import {
   ChevronRight,
   CircleAlert,
   Clock3,
+  Eye,
+  EyeOff,
   LayoutDashboard,
   KeyRound,
   LogOut,
@@ -351,31 +353,41 @@ function App() {
   }, [completedTasks, dashboard, taskFilter, tasks])
 
   const updateLeadStatus = async (lead: Lead, status: LeadStatus) => {
-    try {
-      await api<Lead>(`/leads/${lead.id}`, token, {
-        method: 'PATCH',
-        body: JSON.stringify({ status }),
-      })
-      setNotice(`${lead.full_name} moved to ${stageFor(status).label.toLowerCase()}.`)
-      await refresh()
-      if (selectedLead?.id === lead.id) setSelectedLead({ ...lead, status })
-    } catch (requestError) {
-      dispatch({ type: 'request-failed', error: getErrorMessage(requestError) })
-    }
+    const updated = await api<Lead>(`/leads/${lead.id}`, token, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
+    })
+    setNotice(`${lead.full_name} moved to ${stageFor(status).label.toLowerCase()}.`)
+    await refresh()
+    if (selectedLead?.id === lead.id) setSelectedLead(updated)
+  }
+
+  const requestLeadStatusUpdate = (lead: Lead, status: LeadStatus) => {
+    setConfirmation({
+      title: `Move ${lead.full_name} to ${stageFor(status).label.toLowerCase()}?`,
+      message: `This updates the lead’s pipeline stage from ${stageFor(lead.status).label.toLowerCase()} to ${stageFor(status).label.toLowerCase()}.`,
+      confirmLabel: 'Update stage',
+      onConfirm: () => updateLeadStatus(lead, status),
+    })
   }
 
   const completeTask = async (task: Pick<Task, 'id'>) => {
-    try {
-      await api<Task>(`/tasks/${task.id}`, token, {
-        method: 'PATCH',
-        body: JSON.stringify({ status: 'completed' }),
-      })
-      setNotice('Follow-up marked complete.')
-      dispatch({ type: 'request-succeeded' })
-      await refresh()
-    } catch (requestError) {
-      dispatch({ type: 'request-failed', error: getErrorMessage(requestError) })
-    }
+    await api<Task>(`/tasks/${task.id}`, token, {
+      method: 'PATCH',
+      body: JSON.stringify({ status: 'completed' }),
+    })
+    setNotice('Follow-up marked complete.')
+    dispatch({ type: 'request-succeeded' })
+    await refresh()
+  }
+
+  const requestCompleteTask = (task: Pick<Task, 'id' | 'title'>) => {
+    setConfirmation({
+      title: 'Mark follow-up complete?',
+      message: `“${task.title}” will move to your completed follow-ups.`,
+      confirmLabel: 'Mark complete',
+      onConfirm: () => completeTask(task),
+    })
   }
 
   const openLeadById = async (leadId: string) => {
@@ -400,7 +412,7 @@ function App() {
       setNotice(`Imported ${result.created_count} lead${result.created_count === 1 ? '' : 's'}${result.rejected_count ? `; ${result.rejected_count} row${result.rejected_count === 1 ? '' : 's'} need attention` : ''}.`)
       await refresh()
     } catch (requestError) {
-      setError(getErrorMessage(requestError))
+      throw new Error(getErrorMessage(requestError))
     }
   }
 
@@ -410,7 +422,17 @@ function App() {
       dispatch({ type: 'read-marked' })
     } catch (requestError) {
       setError(getErrorMessage(requestError))
+      throw requestError
     }
+  }
+
+  const requestMarkRead = () => {
+    setConfirmation({
+      title: 'Mark all activity as read?',
+      message: 'Unread activity indicators will be cleared for your account.',
+      confirmLabel: 'Mark as read',
+      onConfirm: markRead,
+    })
   }
 
   const createTeamUser = async (payload: UserCreateRequest) => {
@@ -611,15 +633,15 @@ function App() {
                 <EmptyState title="Workspace access is disabled" description="Your current role does not have permission to read CRM records." />
               )}
               {canReadWorkspace && activePage === 'overview' && (
-                <OverviewPage dashboard={dashboard} leads={leads} events={auditEvents} users={teamUsers} currentUser={user} now={renderTime.getTime()} onOpenLead={setSelectedLead} onOpenLeadById={openLeadById} onOpenTasks={() => setPage('tasks')} onSeeAllActivity={() => setPage('activity')} onCompleteTask={completeTask} onOpenLeads={() => setPage('leads')} onOpenEvent={(event) => void openAuditEvent(event)} canWrite={canWriteWorkspace} />
+                <OverviewPage dashboard={dashboard} leads={leads} events={auditEvents} users={teamUsers} currentUser={user} now={renderTime.getTime()} onOpenLead={setSelectedLead} onOpenLeadById={openLeadById} onOpenTasks={() => setPage('tasks')} onSeeAllActivity={() => setPage('activity')} onCompleteTask={requestCompleteTask} onOpenLeads={() => setPage('leads')} onOpenEvent={(event) => void openAuditEvent(event)} canWrite={canWriteWorkspace} />
               )}
               {canReadWorkspace && activePage === 'leads' && (
-                <LeadsPage leads={leads} query={query} setQuery={setQuery} searchRef={leadSearchRef} statusFilter={statusFilter} setStatusFilter={setStatusFilter} onOpenLead={setSelectedLead} onUpdateStatus={updateLeadStatus} onAddLead={() => setShowCreateLead(true)} onImportFile={importCsv} importErrors={importErrors} onDismissImportErrors={() => dispatch({ type: 'import-errors-cleared' })} canImport={canWriteWorkspace && user.role !== 'agent'} canWrite={canWriteWorkspace} loading={loading} />
+                <LeadsPage leads={leads} query={query} setQuery={setQuery} searchRef={leadSearchRef} statusFilter={statusFilter} setStatusFilter={setStatusFilter} onOpenLead={setSelectedLead} onUpdateStatus={requestLeadStatusUpdate} onAddLead={() => setShowCreateLead(true)} onImportFile={importCsv} onConfirmAction={setConfirmation} importErrors={importErrors} onDismissImportErrors={() => dispatch({ type: 'import-errors-cleared' })} canImport={canWriteWorkspace && user.role !== 'agent'} canWrite={canWriteWorkspace} loading={loading} />
               )}
               {canReadWorkspace && activePage === 'tasks' && (
-                <TasksPage tasks={visibleTasks} filter={taskFilter} setFilter={setTaskFilter} users={teamUsers} currentUser={user} now={renderTime.getTime()} onComplete={completeTask} onOpenLead={openLeadById} canWrite={canWriteWorkspace} />
+                <TasksPage tasks={visibleTasks} filter={taskFilter} setFilter={setTaskFilter} users={teamUsers} currentUser={user} now={renderTime.getTime()} onComplete={requestCompleteTask} onOpenLead={openLeadById} canWrite={canWriteWorkspace} />
               )}
-              {canReadWorkspace && activePage === 'activity' && <ActivityPage events={auditEvents} unreadCount={unreadCount} onMarkRead={markRead} onOpenEvent={(event) => void openAuditEvent(event)} />}
+              {canReadWorkspace && activePage === 'activity' && <ActivityPage events={auditEvents} unreadCount={unreadCount} onMarkRead={requestMarkRead} onOpenEvent={(event) => void openAuditEvent(event)} />}
               {activePage === 'team' && canManageTeam && <TeamPage currentUser={user} users={teamUsers} temporaryPassword={temporaryPassword} onClearTemporaryPassword={() => setTemporaryPassword(null)} onCreate={createTeamUser} onUpdate={updateTeamUser} onResetPassword={resetTeamUserPassword} onError={setError} onConfirmAction={setConfirmation} onResetAll={resetAllUserPasswords} />}
               {activePage === 'profile' && <ProfilePage user={user} onChangePassword={changeOwnPassword} onSaveProfile={updateOwnProfile} onConfirmAction={setConfirmation} />}
             </>
@@ -629,8 +651,8 @@ function App() {
 
       {showNotifications && canReadWorkspace && <NotificationPanel events={auditEvents.slice(0, 5)} unreadCount={unreadCount} onClose={() => setShowNotifications(false)} onOpenEvent={(event) => void openAuditEvent(event)} onOpenActivity={() => { setPage('activity'); setShowNotifications(false) }} />}
       {confirmation && <ConfirmationDialog request={confirmation} onCancel={() => setConfirmation(null)} onConfirmed={() => setConfirmation(null)} />}
-      {selectedLead && canReadWorkspace && <LeadDrawer lead={selectedLead} token={token} onClose={() => setSelectedLead(null)} onUpdated={(updated) => { setSelectedLead(updated); void refresh() }} onError={setError} canWrite={canWriteWorkspace} />}
-      {showCreateLead && canWriteWorkspace && <CreateLeadModal token={token} currentUser={user} onClose={() => setShowCreateLead(false)} onCreated={async (lead) => { setShowCreateLead(false); setNotice(`Added ${lead.full_name} to your leads.`); setPage('leads'); await refresh(); setSelectedLead(lead) }} onError={setError} />}
+      {selectedLead && canReadWorkspace && <LeadDrawer lead={selectedLead} token={token} onClose={() => setSelectedLead(null)} onUpdated={(updated) => { setSelectedLead(updated); void refresh() }} onError={setError} onConfirmAction={setConfirmation} canWrite={canWriteWorkspace} />}
+      {showCreateLead && canWriteWorkspace && <CreateLeadModal token={token} currentUser={user} onClose={() => setShowCreateLead(false)} onConfirmAction={setConfirmation} onCreated={async (lead) => { setShowCreateLead(false); setNotice(`Added ${lead.full_name} to your leads.`); setPage('leads'); await refresh(); setSelectedLead(lead) }} onError={setError} />}
     </div>
   )
 }
@@ -653,6 +675,9 @@ function LoadingState() {
 function LoginScreen({ onLogin, error, setError, theme, onToggleTheme }: { onLogin: (response: LoginResponse) => void; error: string; setError: (message: string) => void; theme: Theme; onToggleTheme: () => void }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  const [forgotPassword, setForgotPassword] = useState(false)
+  const [recoverySent, setRecoverySent] = useState(false)
   const [submitting, setSubmitting] = useState(false)
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
@@ -660,6 +685,14 @@ function LoginScreen({ onLogin, error, setError, theme, onToggleTheme }: { onLog
     setSubmitting(true)
     setError('')
     try {
+      if (forgotPassword) {
+        await api<{ message: string }>('/auth/password-recovery', '', {
+          method: 'POST',
+          body: JSON.stringify({ email }),
+        })
+        setRecoverySent(true)
+        return
+      }
       const response = await api<LoginResponse>('/auth/login', '', { method: 'POST', body: JSON.stringify({ email, password }) })
       onLogin(response)
     } catch (requestError) {
@@ -684,16 +717,19 @@ function LoginScreen({ onLogin, error, setError, theme, onToggleTheme }: { onLog
       <div className="auth-main">
         <ThemeButton theme={theme} onToggle={onToggleTheme} className="auth-theme-toggle" />
         <div className="auth-form-wrap">
-          <span className="auth-overline">WELCOME BACK</span>
-          <h2>Sign in to your<br />workspace<span className="heading-period">.</span></h2>
-          <p className="auth-description">Good to see you again. Let’s pick up where you left off.</p>
+          <span className="auth-overline">{forgotPassword ? 'ACCOUNT RECOVERY' : 'WELCOME BACK'}</span>
+          <h2>{forgotPassword ? <>Request a password<br />reset<span className="heading-period">.</span></> : <>Sign in to your<br />workspace<span className="heading-period">.</span></>}</h2>
+          <p className="auth-description">{forgotPassword ? 'If your account is active, your team owner can issue a temporary password.' : 'Good to see you again. Let’s pick up where you left off.'}</p>
           <form className="auth-form" onSubmit={(event) => void submit(event)}>
-            <label>Email address<input type="email" autoComplete="username" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@urbannest.in" required /></label>
-            <label>Password<input type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Enter your password" required /></label>
+            <label>Email address<input type="email" autoComplete={forgotPassword ? 'email' : 'username'} value={email} onChange={(event) => { setEmail(event.target.value); setRecoverySent(false) }} placeholder="you@urbannest.in" required /></label>
+            {!forgotPassword && <label>Password<span className="password-input-wrap"><input type={showPassword ? 'text' : 'password'} autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Enter your password" required /><button className="password-visibility-toggle" type="button" aria-label={showPassword ? 'Hide password' : 'Show password'} aria-pressed={showPassword} onClick={() => setShowPassword((visible) => !visible)}>{showPassword ? <EyeOff size={16} /> : <Eye size={16} />}</button></span></label>}
+            {!forgotPassword && <button className="auth-link auth-forgot-link" type="button" onClick={() => { setForgotPassword(true); setRecoverySent(false); setError('') }}>Forgot password?</button>}
             {error && <div className="form-error"><CircleAlert size={16} />{error}</div>}
-            <button className="button button-primary auth-submit" disabled={submitting}>{submitting ? 'Signing in…' : 'Sign in'}<ArrowUpRight size={17} /></button>
+            {recoverySent && <div className="auth-recovery-success" role="status" aria-live="polite">If an active account matches that email, its team owner can help with a reset.</div>}
+            <button className="button button-primary auth-submit" disabled={submitting || recoverySent}>{submitting ? forgotPassword ? 'Sending request…' : 'Signing in…' : forgotPassword ? 'Request reset' : 'Sign in'}<ArrowUpRight size={17} /></button>
+            {forgotPassword && <button className="auth-link auth-back-link" type="button" onClick={() => { setForgotPassword(false); setRecoverySent(false); setError('') }}>Back to sign in</button>}
           </form>
-          <div className="auth-note"><span className="secure-dot" /> Your workspace is private and secure.</div>
+          {!forgotPassword && <div className="auth-note"><span className="secure-dot" /> Your workspace is private and secure.</div>}
         </div>
         <div className="auth-footer"><span>© {CURRENT_YEAR} UrbanNest Realty</span><span>Questions? Ask your team owner.</span></div>
       </div>
@@ -767,7 +803,7 @@ function OverviewPage({ dashboard, leads, events, users, currentUser, now, onOpe
   now: number
   onOpenLead: (lead: Lead) => void; onOpenLeadById: (leadId: string) => void
   onOpenTasks: () => void; onSeeAllActivity: () => void
-  onCompleteTask: (task: Pick<Task, 'id'>) => void; onOpenLeads: () => void
+  onCompleteTask: (task: Pick<Task, 'id' | 'title'>) => void; onOpenLeads: () => void
   onOpenEvent: (event: AuditEvent) => void
   canWrite: boolean
 }) {
@@ -834,7 +870,7 @@ function OverviewPage({ dashboard, leads, events, users, currentUser, now, onOpe
         {dueTasks.length ? <div className="followup-list">{dueTasks.map((task) => {
           const lead = leads.find((item) => item.id === task.lead_id)
           return <div className="followup-item" key={task.id}>
-            {canWrite && <button className="task-check" title="Mark complete" onClick={() => onCompleteTask(task)}><Check size={13} /></button>}
+            {canWrite && <button className="task-check" title="Mark complete" aria-label={`Mark ${task.title} complete`} onClick={() => onCompleteTask(task)}><Check size={14} /></button>}
               <button className="followup-copy" onClick={() => lead ? onOpenLead(lead) : onOpenLeadById(task.lead_id)}><strong>{task.title}</strong><span>{task.lead_name}</span></button>
             <span className="task-assignee"><span className="avatar avatar-xs avatar-user">{initials(taskAssigneeName(task, users, currentUser))}</span>{taskAssigneeName(task, users, currentUser)}</span>
             <span className={`task-time ${taskIsOverdue(task.due_at, now) ? 'task-time-overdue' : ''}`}><Clock3 size={12} />{relativeDate(task.due_at)}</span>
@@ -861,16 +897,17 @@ function StatCard({ label, value, icon, hint, tone, trend }: { label: string; va
   return <div className="stat-card"><div className={`stat-icon stat-${tone}`}>{icon}</div><span className="stat-label">{label}</span><strong className="stat-value">{value}</strong><span className="stat-hint">{hint}</span><span className={`stat-trend trend-${tone}`}>{tone === 'rose' ? <ArrowDownRight size={13} /> : <ArrowUpRight size={13} />}{trend}</span></div>
 }
 
-function LeadsPage({ leads, query, setQuery, searchRef, statusFilter, setStatusFilter, onOpenLead, onUpdateStatus, onAddLead, onImportFile, importErrors, onDismissImportErrors, canImport, canWrite, loading }: {
+function LeadsPage({ leads, query, setQuery, searchRef, statusFilter, setStatusFilter, onOpenLead, onUpdateStatus, onAddLead, onImportFile, onConfirmAction, importErrors, onDismissImportErrors, canImport, canWrite, loading }: {
   leads: Lead[]; query: string; setQuery: (value: string) => void; statusFilter: string
   searchRef: React.RefObject<HTMLInputElement | null>
   setStatusFilter: (value: string) => void; onOpenLead: (lead: Lead) => void
   onUpdateStatus: (lead: Lead, status: LeadStatus) => void; onAddLead: () => void
-  onImportFile: (file: File) => void; importErrors: CSVImportResult['errors']
+  onImportFile: (file: File) => Promise<void>; onConfirmAction: (request: ConfirmationRequest) => void
+  importErrors: CSVImportResult['errors']
   onDismissImportErrors: () => void; canImport: boolean; canWrite: boolean; loading: boolean
 }) {
   return <section className="panel full-panel leads-page-panel">
-    <div className="list-toolbar"><div className="search-box"><Search size={17} /><input ref={searchRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search leads, locations…" aria-label="Search leads" /><kbd className="search-shortcut">/</kbd>{query && <button className="icon-button clear-search" aria-label="Clear search" onClick={() => setQuery('')}><X size={14} /></button>}</div><label className="select-wrap"><SlidersHorizontal size={15} /><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} aria-label="Filter by stage"><option value="">All stages</option>{stages.map((stage) => <option key={stage.value} value={stage.value}>{stage.label}</option>)}</select><ChevronDown size={14} /></label><span className="result-count">{leads.length} leads</span>{canImport && <label className="button button-secondary import-button"><Upload size={15} /> Import CSV<input type="file" accept=".csv,text/csv" onChange={(event) => { const file = event.target.files?.[0]; if (file) onImportFile(file); event.currentTarget.value = '' }} /></label>}</div>
+    <div className="list-toolbar"><div className="search-box"><Search size={17} /><input ref={searchRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search leads, locations…" aria-label="Search leads" /><kbd className="search-shortcut">/</kbd>{query && <button className="icon-button clear-search" aria-label="Clear search" onClick={() => setQuery('')}><X size={14} /></button>}</div><label className="select-wrap"><SlidersHorizontal size={15} /><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} aria-label="Filter by stage"><option value="">All stages</option>{stages.map((stage) => <option key={stage.value} value={stage.value}>{stage.label}</option>)}</select><ChevronDown size={14} /></label><span className="result-count">{leads.length} leads</span>{canImport && <label className="button button-secondary import-button"><Upload size={15} /> Import CSV<input type="file" accept=".csv,text/csv" onChange={(event) => { const file = event.target.files?.[0]; if (file) onConfirmAction({ title: 'Import leads from CSV?', message: `This will add leads from “${file.name}” to the workspace. Rows that cannot be imported will be reported for review.`, confirmLabel: 'Import leads', onConfirm: () => onImportFile(file) }); event.currentTarget.value = '' }} /></label>}</div>
     {importErrors.length > 0 && <div className="csv-errors"><div><strong>Some rows weren’t imported</strong><span>Review the row numbers and fix the source CSV before retrying.</span></div><button className="icon-button" aria-label="Dismiss import errors" onClick={onDismissImportErrors}><X size={16} /></button><ul>{importErrors.slice(0, 8).map((item) => <li key={`${item.row}-${item.message}`}><strong>Row {item.row}</strong>{item.message}</li>)}</ul>{importErrors.length > 8 && <small>And {importErrors.length - 8} more row errors.</small>}</div>}
     <div className="table-scroll"><table className="data-table leads-table"><thead><tr><th>Lead</th><th>Contact</th><th>Requirement</th><th>Source</th><th>Stage</th><th>Added</th><th aria-label="Open" /></tr></thead><tbody>{leads.map((lead) => <tr key={lead.id}><td><button className="lead-cell lead-cell-button" onClick={() => onOpenLead(lead)}><div className={`avatar avatar-${avatarColor(lead.full_name)}`}>{initials(lead.full_name)}</div><span><strong>{lead.full_name}</strong><small>{lead.preferred_location || 'Location not set'}</small></span></button></td><td><span>{lead.email || '—'}</span><small className="table-subline">{lead.phone || 'No phone'}</small></td><td><strong className="requirement-main">{lead.bhk ? `${lead.bhk} BHK` : 'Home search'}</strong><small className="table-subline">{budgetRange(lead)}</small></td><td><span className="source-label">{sourceLabels[lead.source]}</span></td><td><select className={`status-select status-${stageFor(lead.status).tone}`} aria-label={`Change ${lead.full_name} stage`} value={lead.status} disabled={!canWrite} onChange={(event) => void onUpdateStatus(lead, event.target.value as LeadStatus)}>{stages.map((stage) => <option key={stage.value} value={stage.value}>{stage.label}</option>)}</select></td><td className="muted-cell">{formatDate(lead.created_at)}</td><td><button className="icon-button row-open" aria-label={`Open ${lead.full_name}`} onClick={() => onOpenLead(lead)}><ChevronRight size={17} /></button></td></tr>)}</tbody></table></div>
     {!leads.length && !loading && <EmptyState title={query || statusFilter ? 'No matching leads' : 'No leads yet'} description={query || statusFilter ? 'Try another search or clear the stage filter.' : 'Your next great client relationship starts here.'} action={!query && !statusFilter && canWrite ? <button className="button button-primary" onClick={onAddLead}><Plus size={16} /> Add your first lead</button> : undefined} />}
@@ -883,7 +920,7 @@ function TasksPage({ tasks, filter, setFilter, users, currentUser, now, onComple
   tasks: (Task | Dashboard['due_today'][number])[]; filter: 'all' | 'today' | 'overdue' | 'completed'
   users: User[]; currentUser: User
   setFilter: (filter: 'all' | 'today' | 'overdue' | 'completed') => void; now: number
-  onComplete: (task: Pick<Task, 'id'>) => void; onOpenLead: (leadId: string) => void
+  onComplete: (task: Pick<Task, 'id' | 'title'>) => void; onOpenLead: (leadId: string) => void
   canWrite: boolean
 }) {
   const filters = [{ id: 'all', label: 'All open' }, { id: 'today', label: 'Due today' }, { id: 'overdue', label: 'Overdue' }, { id: 'completed', label: 'Completed' }] as const
@@ -1003,10 +1040,23 @@ function ProfilePage({ user, onChangePassword, onSaveProfile, onConfirmAction }:
 
   const saveProfile = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    setProfileSaving(true)
     const normalizedPhone = phone.trim()
-    if (await onSaveProfile({ phone: normalizedPhone || null })) setPhone(normalizedPhone)
-    setProfileSaving(false)
+    onConfirmAction({
+      title: 'Save your profile changes?',
+      message: `This will ${normalizedPhone ? 'set your profile phone number' : 'remove your profile phone number'}.`,
+      confirmLabel: 'Save changes',
+      onConfirm: async () => {
+        setProfileSaving(true)
+        try {
+          if (!await onSaveProfile({ phone: normalizedPhone || null })) {
+            throw new Error('Your profile was not updated. Review the error message and try again.')
+          }
+          setPhone(normalizedPhone)
+        } finally {
+          setProfileSaving(false)
+        }
+      },
+    })
   }
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
@@ -1220,7 +1270,7 @@ function TeamPage({ currentUser, users, temporaryPassword, onClearTemporaryPassw
   </section>
 }
 
-function LeadDrawer({ lead: initialLead, token, onClose, onUpdated, onError, canWrite }: { lead: Lead; token: string; onClose: () => void; onUpdated: (lead: Lead) => void; onError: (message: string) => void; canWrite: boolean }) {
+function LeadDrawer({ lead: initialLead, token, onClose, onUpdated, onError, onConfirmAction, canWrite }: { lead: Lead; token: string; onClose: () => void; onUpdated: (lead: Lead) => void; onError: (message: string) => void; onConfirmAction: (request: ConfirmationRequest) => void; canWrite: boolean }) {
   const [lead, setLead] = useState(initialLead)
   const [activities, setActivities] = useState<Activity[]>([])
   const [activityText, setActivityText] = useState('')
@@ -1239,47 +1289,75 @@ function LeadDrawer({ lead: initialLead, token, onClose, onUpdated, onError, can
       .catch((requestError: unknown) => onError(getErrorMessage(requestError)))
   }, [initialLead, onError, token])
 
-  const changeStage = async (status: LeadStatus) => {
-    try {
-      const updated = await api<Lead>(`/leads/${lead.id}`, token, { method: 'PATCH', body: JSON.stringify({ status }) })
-      setLead(updated)
-      onUpdated(updated)
-    } catch (requestError) {
-      onError(getErrorMessage(requestError))
-    }
+  const changeStage = (status: LeadStatus) => {
+    if (status === lead.status) return
+    onConfirmAction({
+      title: `Move ${lead.full_name} to ${stageFor(status).label.toLowerCase()}?`,
+      message: `This updates the lead’s pipeline stage from ${stageFor(lead.status).label.toLowerCase()} to ${stageFor(status).label.toLowerCase()}.`,
+      confirmLabel: 'Update stage',
+      onConfirm: async () => {
+        try {
+          const updated = await api<Lead>(`/leads/${lead.id}`, token, { method: 'PATCH', body: JSON.stringify({ status }) })
+          setLead(updated)
+          onUpdated(updated)
+        } catch (requestError) {
+          const message = getErrorMessage(requestError)
+          onError(message)
+          throw new Error(message)
+        }
+      },
+    })
   }
 
-  const submitActivity = async (event: FormEvent<HTMLFormElement>) => {
+  const submitActivity = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    setSaving(true)
-    try {
-      const activity = await api<Activity>(`/leads/${lead.id}/activities`, token, { method: 'POST', body: JSON.stringify({ type: activityType, body: activityText }) })
-      setActivities((items) => [activity, ...items])
-      setActivityText('')
-      setActiveForm(null)
-      onError('')
-      onUpdated(lead)
-    } catch (requestError) {
-      onError(getErrorMessage(requestError))
-    } finally {
-      setSaving(false)
-    }
+    onConfirmAction({
+      title: `Log ${activityType.replaceAll('_', ' ')} for ${lead.full_name}?`,
+      message: 'This will add an entry to the lead’s shared activity timeline.',
+      confirmLabel: 'Save activity',
+      onConfirm: async () => {
+        setSaving(true)
+        try {
+          const activity = await api<Activity>(`/leads/${lead.id}/activities`, token, { method: 'POST', body: JSON.stringify({ type: activityType, body: activityText }) })
+          setActivities((items) => [activity, ...items])
+          setActivityText('')
+          setActiveForm(null)
+          onError('')
+          onUpdated(lead)
+        } catch (requestError) {
+          const message = getErrorMessage(requestError)
+          onError(message)
+          throw new Error(message)
+        } finally {
+          setSaving(false)
+        }
+      },
+    })
   }
 
-  const submitTask = async (event: FormEvent<HTMLFormElement>) => {
+  const submitTask = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    setSaving(true)
-    try {
-      await api<Task>('/tasks', token, { method: 'POST', body: JSON.stringify({ lead_id: lead.id, title: taskTitle, due_at: new Date(taskDate).toISOString() }) })
-      setTaskTitle('')
-      setActiveForm(null)
-      onError('')
-      onUpdated(lead)
-    } catch (requestError) {
-      onError(getErrorMessage(requestError))
-    } finally {
-      setSaving(false)
-    }
+    onConfirmAction({
+      title: `Create this follow-up for ${lead.full_name}?`,
+      message: `“${taskTitle}” will be added to your task list, due ${new Date(taskDate).toLocaleString()}.`,
+      confirmLabel: 'Create follow-up',
+      onConfirm: async () => {
+        setSaving(true)
+        try {
+          await api<Task>('/tasks', token, { method: 'POST', body: JSON.stringify({ lead_id: lead.id, title: taskTitle, due_at: new Date(taskDate).toISOString() }) })
+          setTaskTitle('')
+          setActiveForm(null)
+          onError('')
+          onUpdated(lead)
+        } catch (requestError) {
+          const message = getErrorMessage(requestError)
+          onError(message)
+          throw new Error(message)
+        } finally {
+          setSaving(false)
+        }
+      },
+    })
   }
 
   return <><button className="drawer-backdrop" aria-label="Close lead details" onClick={onClose} /><aside className="lead-drawer"><div className="drawer-topbar"><span className="eyebrow">LEAD PROFILE</span><button className="icon-button" aria-label="Close lead details" onClick={onClose}><X size={19} /></button></div><div className="drawer-lead-head"><div className={`avatar avatar-large avatar-${avatarColor(lead.full_name)}`}>{initials(lead.full_name)}</div><div><h2>{lead.full_name}</h2><span className="drawer-subtitle">Added {formatDate(lead.created_at, { day: 'numeric', month: 'long', year: 'numeric' })}</span></div></div>
@@ -1328,13 +1406,12 @@ function AICopilotPreview({ lead }: { lead: Lead }) {
   </section>
 }
 
-function CreateLeadModal({ token, currentUser, onClose, onCreated, onError }: { token: string; currentUser: User; onClose: () => void; onCreated: (lead: Lead) => void; onError: (message: string) => void }) {
+function CreateLeadModal({ token, currentUser, onClose, onCreated, onError, onConfirmAction }: { token: string; currentUser: User; onClose: () => void; onCreated: (lead: Lead) => void | Promise<void>; onError: (message: string) => void; onConfirmAction: (request: ConfirmationRequest) => void }) {
   const [form, setForm] = useState({ full_name: '', email: '', phone: '', source: 'manual' as LeadSource, status: 'new' as LeadStatus, budget_min_inr: '', budget_max_inr: '', bhk: '', preferred_location: '', notes: '' })
   const [saving, setSaving] = useState(false)
 
-  const submit = async (event: FormEvent<HTMLFormElement>) => {
+  const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    setSaving(true)
     onError('')
     const payload = {
       ...form,
@@ -1346,14 +1423,24 @@ function CreateLeadModal({ token, currentUser, onClose, onCreated, onError }: { 
       notes: form.notes || null,
       assigned_to: currentUser.role === 'agent' ? currentUser.id : undefined,
     }
-    try {
-      const lead = await api<Lead>('/leads', token, { method: 'POST', body: JSON.stringify(payload) })
-      onCreated(lead)
-    } catch (requestError) {
-      onError(getErrorMessage(requestError))
-    } finally {
-      setSaving(false)
-    }
+    onConfirmAction({
+      title: `Add ${payload.full_name} as a lead?`,
+      message: `This creates a new lead in the ${stageFor(payload.status).label.toLowerCase()} stage${payload.email ? ` with email ${payload.email}` : ''}.`,
+      confirmLabel: 'Save lead',
+      onConfirm: async () => {
+        setSaving(true)
+        try {
+          const lead = await api<Lead>('/leads', token, { method: 'POST', body: JSON.stringify(payload) })
+          await onCreated(lead)
+        } catch (requestError) {
+          const message = getErrorMessage(requestError)
+          onError(message)
+          throw new Error(message)
+        } finally {
+          setSaving(false)
+        }
+      },
+    })
   }
 
   const update = (key: keyof typeof form, value: string) => setForm((current) => ({ ...current, [key]: value }))

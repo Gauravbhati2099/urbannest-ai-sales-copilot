@@ -1,16 +1,32 @@
 from __future__ import annotations
 
+import csv
+import os
 import secrets
+import tempfile
+from dataclasses import dataclass
+from pathlib import Path
+from uuid import UUID
 
 from pwdlib import PasswordHash
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.models import Team, User
-from scripts.seed_demo import DEMO_USERS, TEAM_NAME, seed_demo_data
+from scripts.seed_demo import DEMO_USERS, TEAM_NAME
+
+CREDENTIALS_CSV = Path(__file__).resolve().parents[1] / "demo_credentials.csv"
 
 
-def rotate_demo_password(session: Session) -> str:
+@dataclass(frozen=True)
+class DemoCredential:
+    user_id: UUID
+    login_id: str
+    role: str
+    temporary_password: str
+
+
+def rotate_demo_password(session: Session) -> list[DemoCredential]:
     expected_users = {
         email: demo_user
         for demo_user in DEMO_USERS
@@ -62,37 +78,83 @@ def rotate_demo_password(session: Session) -> str:
             "The expected UrbanNest demo team was not found; no passwords changed"
         )
 
-    _, seeded_password = seed_demo_data(session)
-    if seeded_password is not None:
-        raise RuntimeError(
-            "Demo data refresh unexpectedly created accounts; no passwords changed"
-        )
-
-    new_password = secrets.token_urlsafe(24)
     password_hasher = PasswordHash.recommended()
+    credentials = []
     for demo_user in DEMO_USERS:
         user = demo_accounts[demo_user.email]
-        user.email = demo_user.email
-        user.full_name = demo_user.full_name
-        user.phone = demo_user.phone
-        user.password_hash = password_hasher.hash(new_password)
+        temporary_password = secrets.token_urlsafe(24)
+        user.password_hash = password_hasher.hash(temporary_password)
+        credentials.append(
+            DemoCredential(
+                user_id=user.id,
+                login_id=user.email,
+                role=user.role.value,
+                temporary_password=temporary_password,
+            )
+        )
     session.flush()
-    return new_password
+    return credentials
+
+
+def _stage_credentials_csv(
+    credentials: list[DemoCredential], destination: Path
+) -> Path:
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        newline="",
+        dir=destination.parent,
+        prefix=f".{destination.name}.",
+        suffix=".tmp",
+        delete=False,
+    ) as temp_file:
+        writer = csv.DictWriter(
+            temp_file,
+            fieldnames=("user_id", "login_id", "role", "temporary_password"),
+        )
+        writer.writeheader()
+        writer.writerows(
+            {
+                "user_id": str(credential.user_id),
+                "login_id": credential.login_id,
+                "role": credential.role,
+                "temporary_password": credential.temporary_password,
+            }
+            for credential in credentials
+        )
+        temp_file.flush()
+        os.fsync(temp_file.fileno())
+        return Path(temp_file.name)
 
 
 def main() -> None:
     from app.db.session import SessionLocal
 
-    with SessionLocal.begin() as session:
-        new_password = rotate_demo_password(session)
+    staged_csv = None
+    committed = False
+    try:
+        with SessionLocal.begin() as session:
+            credentials = rotate_demo_password(session)
+            staged_csv = _stage_credentials_csv(credentials, CREDENTIALS_CSV)
+        committed = True
+    finally:
+        if not committed and staged_csv is not None and staged_csv.exists():
+            staged_csv.unlink()
+
+    if staged_csv is None:
+        raise RuntimeError("Password rotation did not produce a credentials CSV")
+    try:
+        os.replace(staged_csv, CREDENTIALS_CSV)
+    except OSError as error:
+        raise RuntimeError(
+            "Passwords were reset, but the credentials CSV could not be installed. "
+            f"The staged credentials remain at {staged_csv}"
+        ) from error
 
     print(
-        "Updated synthetic demo account details and rotated passwords "
-        "for all 15 accounts; refreshed leads, activity, and follow-ups."
+        f"Rotated passwords for {len(credentials)} seeded demo accounts. "
+        f"Local credentials CSV: {CREDENTIALS_CSV}"
     )
-    for demo_user in DEMO_USERS:
-        print(f"{demo_user.full_name} ({demo_user.role.value}): {demo_user.email}")
-    print(f"Shared demo password (save it now): {new_password}")
 
 
 if __name__ == "__main__":

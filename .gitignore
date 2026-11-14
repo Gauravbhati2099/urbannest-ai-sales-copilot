@@ -10,4 +10,5 @@ __pycache__/
 .ruff_cache/
 Assestment-Tech-Role.pdf
 backend/LOCAL_BACKEND_GUIDE.md
-
+/backend/demo_credentials.csv
+/backend/.demo_credentials.csv.*.tmp

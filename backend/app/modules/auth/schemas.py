@@ -23,6 +23,20 @@ class LoginRequest(BaseModel):
         return normalized
 
 
+class PasswordRecoveryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    email: str = Field(min_length=3, max_length=320)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", normalized) is None:
+            raise ValueError("Enter a valid email address")
+        return normalized
+
+
 class UserRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -141,3 +155,9 @@ class PasswordResetResponse(BaseModel):
     user_id: UUID
     temporary_password: str
     must_change_password: bool = True
+
+
+class PasswordRecoveryResponse(BaseModel):
+    message: str = (
+        "If an active account matches that email, its team owner can help with a reset."
+    )

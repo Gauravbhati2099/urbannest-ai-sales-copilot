@@ -289,6 +289,73 @@ class APIAuthAndAuthorizationTests(unittest.TestCase):
             self.assertEqual(len(login_buckets), 1)
             self.assertEqual(login_buckets[0].hit_count, 3)
 
+    def test_password_recovery_notifies_active_team_owner_without_resetting_password(
+        self,
+    ) -> None:
+        original_hash = self.agent.password_hash
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "SMTP_HOST": "smtp.example.test",
+                    "SMTP_PORT": "587",
+                    "SMTP_FROM_EMAIL": "crm@example.test",
+                    "SMTP_USE_TLS": "true",
+                    "SMTP_USE_SSL": "false",
+                },
+            ),
+            patch(
+                "app.modules.auth.router.send_password_recovery_notification"
+            ) as send_notification,
+        ):
+            response = self.client.post(
+                "/api/v1/auth/password-recovery",
+                json={"email": "agent@example.test"},
+            )
+
+        self.assertEqual(response.status_code, 202, response.text)
+        self.assertEqual(
+            response.json()["message"],
+            "If an active account matches that email, its team owner can help with a reset.",
+        )
+        send_notification.assert_called_once()
+        notified_user, notified_owners, smtp_settings = send_notification.call_args.args
+        self.assertEqual(notified_user.email, "agent@example.test")
+        self.assertEqual([owner.email for owner in notified_owners], ["owner@example.test"])
+        self.assertEqual(smtp_settings.host, "smtp.example.test")
+        with self.session_factory() as session:
+            user = session.get(User, self.agent_id)
+            assert user is not None
+            self.assertEqual(user.password_hash, original_hash)
+
+    def test_password_recovery_does_not_disclose_unknown_accounts(self) -> None:
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "SMTP_HOST": "smtp.example.test",
+                    "SMTP_PORT": "587",
+                    "SMTP_FROM_EMAIL": "crm@example.test",
+                    "SMTP_USE_TLS": "true",
+                    "SMTP_USE_SSL": "false",
+                },
+            ),
+            patch(
+                "app.modules.auth.router.send_password_recovery_notification"
+            ) as send_notification,
+        ):
+            response = self.client.post(
+                "/api/v1/auth/password-recovery",
+                json={"email": "unknown@example.test"},
+            )
+
+        self.assertEqual(response.status_code, 202, response.text)
+        self.assertEqual(
+            response.json()["message"],
+            "If an active account matches that email, its team owner can help with a reset.",
+        )
+        send_notification.assert_not_called()
+
     def test_existing_token_is_rejected_after_account_deactivation(self) -> None:
         token = self.login("agent@example.test")
         with self.session_factory.begin() as session:

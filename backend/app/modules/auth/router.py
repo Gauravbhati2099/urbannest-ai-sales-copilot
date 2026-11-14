@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import csv
 import io
+import logging
 import secrets
+import smtplib
 from typing import Annotated
 from uuid import UUID
 
@@ -17,6 +19,11 @@ from app.core.dependencies import (
     DatabaseSession,
     can_manage_team_users,
 )
+from app.core.email import (
+    EmailConfigurationError,
+    get_smtp_settings,
+    send_password_recovery_notification,
+)
 from app.core.rate_limit import (
     clear_rate_limit,
     client_address,
@@ -30,6 +37,8 @@ from app.modules.auth.schemas import (
     BulkPasswordResetRequest,
     LoginRequest,
     LoginResponse,
+    PasswordRecoveryRequest,
+    PasswordRecoveryResponse,
     PasswordResetResponse,
     ProfileUpdateRequest,
     UserCreatedResponse,
@@ -39,6 +48,7 @@ from app.modules.auth.schemas import (
 )
 from app.modules.audit.service import record_audit_event
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["auth"])
 users_router = APIRouter(prefix="/users", tags=["user administration"])
 password_hash = PasswordHash.recommended()
@@ -154,6 +164,77 @@ def login(
         expires_in=expires_in,
         user=UserRead.model_validate(user),
     )
+
+
+@router.post(
+    "/password-recovery",
+    response_model=PasswordRecoveryResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def request_password_recovery(
+    payload: PasswordRecoveryRequest,
+    request: Request,
+    session: DatabaseSession,
+) -> PasswordRecoveryResponse:
+    """Notify active team owners to handle a password reset request."""
+    try:
+        smtp_settings = get_smtp_settings()
+    except EmailConfigurationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Password recovery email is not configured",
+        ) from exc
+
+    window_seconds = rate_limit_setting("PASSWORD_RECOVERY_WINDOW_SECONDS", 900)
+    enforce_rate_limits(
+        session,
+        limits=(
+            (
+                "password_recovery_ip",
+                client_address(request),
+                rate_limit_setting("PASSWORD_RECOVERY_LIMIT_PER_IP", 5),
+            ),
+            (
+                "password_recovery_email",
+                payload.email,
+                rate_limit_setting("PASSWORD_RECOVERY_LIMIT_PER_EMAIL", 2),
+            ),
+        ),
+        window_seconds=window_seconds,
+    )
+
+    user = session.scalar(
+        select(User).where(
+            User.email == payload.email,
+            User.is_active.is_(True),
+        )
+    )
+    if user is None:
+        return PasswordRecoveryResponse()
+
+    owners = session.scalars(
+        select(User).where(
+            User.team_id == user.team_id,
+            User.role == UserRole.OWNER,
+            User.is_active.is_(True),
+        )
+    ).all()
+    try:
+        send_password_recovery_notification(user, owners, smtp_settings)
+    except EmailConfigurationError as exc:
+        logger.error("Password recovery notification is not configured: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Password recovery email could not be sent",
+        ) from exc
+    except (OSError, smtplib.SMTPException):
+        logger.exception("Failed to deliver password recovery notification")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Password recovery email could not be sent",
+        ) from None
+
+    return PasswordRecoveryResponse()
 
 
 @router.post("/change-password", response_model=LoginResponse)

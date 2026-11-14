@@ -46,9 +46,10 @@ details and activity, open and completed follow-ups, CSV import for
 managers/owners, and a shared activity feed with links to related records.
 Owners and managers can manage team accounts and access; users can change their
 own password from their profile. The navigation can be collapsed, and the
-theme and sidebar preferences are saved in the current browser. API validation
-errors are shown as readable messages. On the leads page, press `/` to focus
-search; press `Escape` to dismiss an open panel or dialog.
+theme and sidebar preferences are saved in the current browser only when
+optional browser storage is allowed. API validation errors are shown as
+readable messages. On the leads page, press `/` to focus search; press `Escape`
+to dismiss an open panel or dialog.
 
 1. Create `frontend\.env.local` from `frontend\.env.example`. The default API
    URL is the deployed Render service; override `VITE_API_BASE_URL` when using
@@ -89,7 +90,12 @@ indexing. This frontend does not expose AI inference controls yet.
 - [API and authentication contract](docs/api-auth.md)
 - [Frontend API guide](docs/frontend-api.md)
 - [Authentication flow and user-data handling](docs/authentication-and-data.md)
+- [User manual](docs/user-manual.md)
 - [Assessment feature and completion checklist](docs/assessment-readiness.md)
+
+The frontend includes a draft privacy policy and browser-storage choices page.
+Complete its operator/contact and production-provider placeholders, then obtain
+an appropriate legal review before using it as a production policy.
 
 Do not use real client data. Demo credentials should be distributed securely
 and never committed to this repository.

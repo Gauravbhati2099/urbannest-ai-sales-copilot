@@ -65,12 +65,21 @@ Use **Refresh** to request the latest workspace data.
 4. Open a lead to update its pipeline stage, log a call or other interaction,
    or add a follow-up.
 
-### Import a CSV
+### Import a CSV or Excel spreadsheet
 
-Managers, owners, and writable co-owners can import a CSV from the Leads page.
-The file must be UTF-8, no larger than 2 MiB, and contain a `full_name` column.
-The import supports up to 500 rows. Review the per-row results and correct
-rejected records before importing again.
+Managers, owners, and writable co-owners can import a UTF-8 CSV or Excel `.xlsx`
+file from the Leads page. Excel imports use the first worksheet. The first row
+must use the API's column names:
+
+- Required: `full_name`
+- Optional: `email`, `phone`, `source`, `status`, `budget_min_inr`,
+  `budget_max_inr`, `bhk`, `preferred_location`, `notes`, `assigned_to`
+
+Header names are case-insensitive, but every column must be supported and
+unique. Use whole numbers for budgets in INR and for `bhk`. Files may be at most
+2 MiB and 500 data rows. The browser checks the spreadsheet structure before
+upload; the API repeats validation and reports row-specific errors. Correct
+rejected records before importing them again.
 
 > **Screenshot placeholder - Leads and lead details:** Add the leads list and
 > lead detail images here.

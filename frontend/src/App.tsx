@@ -3,6 +3,7 @@ import {
   Activity as ActivityIcon,
   ArrowUpRight,
   Bell,
+  Building2,
   CalendarDays,
   Check,
   CheckCheck,
@@ -63,11 +64,12 @@ import { PhoneNumberInput } from './PhoneNumberInput'
 import { normalizeEmail, normalizeName, normalizePhone, splitStoredPhone, validateEmail, validateName } from './form-normalization'
 import { initialWorkspaceState, workspaceReducer } from './workspace-state'
 import { AppFailureScreen } from './ErrorScreens'
+import { EstatePage } from './EstatePage'
 import { CookieConsentBanner, PrivacyPolicyPage, StoragePreferencesPage, type LegalPageKind, type StorageConsent } from './PrivacyPages'
 import { inspectLeadImportFile, LEAD_IMPORT_COLUMNS, type LeadImportPreflight } from './lead-import'
 import './App.css'
 
-type Page = 'overview' | 'leads' | 'tasks' | 'activity' | 'team' | 'org-chart' | 'profile'
+type Page = 'overview' | 'leads' | 'estates' | 'tasks' | 'activity' | 'team' | 'org-chart' | 'profile'
 type Theme = 'light' | 'dark'
 type LeadSortKey = 'name' | 'contact' | 'requirement' | 'source' | 'stage' | 'added'
 type SortDirection = 'ascending' | 'descending'
@@ -108,6 +110,7 @@ function readWorkspacePage(): Page {
   switch (page) {
     case 'overview':
     case 'leads':
+    case 'estates':
     case 'tasks':
     case 'activity':
     case 'team':
@@ -579,6 +582,7 @@ function App() {
   const pageTitle = {
     overview: 'Overview',
     leads: 'Leads',
+    estates: 'Estates',
     tasks: 'Follow-ups',
     activity: 'Activity',
     team: 'Team',
@@ -851,6 +855,7 @@ function App() {
           {canReadWorkspace && <>
             <NavButton label="Overview" icon={<LayoutDashboard size={18} />} active={activePage === 'overview'} onClick={() => { setPage('overview'); setMobileNavOpen(false) }}>Overview</NavButton>
             <NavButton label="Leads" icon={<Users size={18} />} active={activePage === 'leads'} onClick={() => { setPage('leads'); setMobileNavOpen(false) }}>Leads<span className="nav-count">{dashboard?.total_leads ?? '—'}</span></NavButton>
+            <NavButton label="Estates" icon={<Building2 size={18} />} active={activePage === 'estates'} onClick={() => { setPage('estates'); setMobileNavOpen(false) }}>Estates</NavButton>
             <NavButton label="Follow-ups" icon={<CalendarDays size={18} />} active={activePage === 'tasks'} onClick={() => { setPage('tasks'); setMobileNavOpen(false) }}>Follow-ups</NavButton>
             <NavButton label="Activity" icon={<ActivityIcon size={18} />} active={activePage === 'activity'} onClick={() => { setPage('activity'); setMobileNavOpen(false) }}>Activity{unreadCount > 0 && <span className="nav-count">{unreadCount > 9 ? '9+' : unreadCount}</span>}</NavButton>
           </>}
@@ -908,7 +913,7 @@ function App() {
             <div>
               <p className="eyebrow">{formatDate(renderTime.toISOString(), { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
               <h1>{activePage === 'overview' ? 'Sales overview' : pageTitle}</h1>
-              <p className="heading-subtitle">{activePage === 'overview' ? 'A clear view of your leads and next steps' : activePage === 'leads' ? 'Track each enquiry from first contact to decision' : activePage === 'tasks' ? 'Keep client conversations moving with timely follow-ups' : activePage === 'activity' ? 'Changes across leads, follow-ups, and your team' : activePage === 'team' ? 'Manage team access and account setup' : activePage === 'org-chart' ? 'Explore your active team and reporting lines' : 'Your account details and sign-in security'}</p>
+              <p className="heading-subtitle">{activePage === 'overview' ? 'A clear view of your leads and next steps' : activePage === 'leads' ? 'Track each enquiry from first contact to decision' : activePage === 'estates' ? 'Manage property inventory and the leads moving through each estate' : activePage === 'tasks' ? 'Keep client conversations moving with timely follow-ups' : activePage === 'activity' ? 'Changes across leads, follow-ups, and your team' : activePage === 'team' ? 'Manage team access and account setup' : activePage === 'org-chart' ? 'Explore your active team and reporting lines' : 'Your account details and sign-in security'}</p>
             </div>
             <div className="heading-actions">
               <button className="button button-secondary refresh-button" onClick={() => void refresh()} disabled={loading}><RefreshCw size={16} className={loading ? 'spinning' : ''} /><span>Refresh</span></button>
@@ -930,6 +935,9 @@ function App() {
               )}
               {canReadWorkspace && activePage === 'leads' && (
                 <LeadsPage leads={leads} query={query} setQuery={setQuery} searchRef={leadSearchRef} onOpenLead={setSelectedLead} onUpdateStatus={requestLeadStatusUpdate} onAddLead={() => setShowCreateLead(true)} onImportFile={importCsv} importErrors={importErrors} onDismissImportErrors={() => dispatch({ type: 'import-errors-cleared' })} canImport={canWriteWorkspace && user.role !== 'agent'} canWrite={canWriteWorkspace} loading={loading} />
+              )}
+              {canReadWorkspace && activePage === 'estates' && (
+                <EstatePage token={token} currentUser={user} leads={leads} canWrite={canWriteWorkspace} onError={setError} onNotice={setNotice} onWorkspaceRefresh={() => void refresh()} />
               )}
               {canReadWorkspace && activePage === 'tasks' && (
                 <TasksPage tasks={visibleTasks} filters={taskFilters} setFilters={setTaskFilters} users={teamUsers} currentUser={user} now={renderTime.getTime()} onComplete={requestCompleteTask} onOpenLead={openLeadById} canWrite={canWriteWorkspace} />

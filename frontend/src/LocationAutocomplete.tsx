@@ -9,6 +9,7 @@ interface PhotonFeature {
 interface LocationAutocompleteProps {
   value: LocationSelection | null
   onChange: (selection: LocationSelection | null, hasUnverifiedText: boolean) => void
+  label?: string
 }
 
 const suggestionCache = new Map<string, LocationSelection[]>()
@@ -73,7 +74,7 @@ function parseFeature(feature: PhotonFeature): LocationSelection | null {
   }
 }
 
-export function LocationAutocomplete({ value, onChange }: LocationAutocompleteProps) {
+export function LocationAutocomplete({ value, onChange, label = 'Preferred location' }: LocationAutocompleteProps) {
   const [query, setQuery] = useState(value?.display_name ?? '')
   const [suggestions, setSuggestions] = useState<LocationSelection[]>([])
   const [loading, setLoading] = useState(false)
@@ -150,7 +151,7 @@ export function LocationAutocomplete({ value, onChange }: LocationAutocompletePr
 
   return (
     <label className="location-autocomplete form-span">
-      Preferred location
+      {label}
       <input
         type="search"
         value={query}

@@ -12,6 +12,7 @@ from app.modules.ai.router import router as ai_router
 from app.modules.leads.router import public_router, router as leads_router
 from app.modules.tasks.router import router as tasks_router
 from app.modules.dashboard.router import router as dashboard_router
+from app.modules.estates.router import router as estates_router
 
 
 def create_app() -> FastAPI:
@@ -31,6 +32,7 @@ def create_app() -> FastAPI:
     app.include_router(leads_router, prefix=api_prefix)
     app.include_router(tasks_router, prefix=api_prefix)
     app.include_router(dashboard_router, prefix=api_prefix)
+    app.include_router(estates_router, prefix=api_prefix)
     app.include_router(public_router, prefix=api_prefix)
 
     @app.get("/health", tags=["health"])

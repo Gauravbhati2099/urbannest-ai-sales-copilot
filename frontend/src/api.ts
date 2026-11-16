@@ -3,6 +3,9 @@ const API_PREFIX = `${API_ROOT}/api/v1`
 
 export type LeadStatus = 'new' | 'contacted' | 'site_visit' | 'negotiation' | 'won' | 'lost'
 export type LeadSource = 'website' | '99acres' | 'magicbricks' | 'instagram' | 'whatsapp' | 'walk_in' | 'manual' | 'csv_import' | 'other'
+export type EstateType = 'flat' | 'plot' | 'house' | 'commercial_land' | 'farmland' | 'farmhouse'
+export type EstateStatus = 'available' | 'under_offer' | 'sold' | 'withdrawn'
+export type EstateInterestStatus = 'interested' | 'site_visit' | 'negotiation' | 'won' | 'lost'
 export type UserRole = 'owner' | 'co_owner' | 'manager' | 'agent'
 export type TaskStatus = 'open' | 'completed' | 'cancelled'
 
@@ -54,6 +57,53 @@ export interface Lead {
   notes: string | null
   created_at: string
   updated_at: string
+}
+
+export interface Estate {
+  id: string
+  team_id: string
+  assigned_to: string | null
+  assigned_to_name: string | null
+  title: string
+  estate_type: EstateType
+  status: EstateStatus
+  location: LocationSelection
+  asking_price_inr: number | null
+  description: string | null
+  details: Record<string, number | string>
+  created_at: string
+  updated_at: string
+}
+
+export interface EstateAssignee {
+  id: string
+  full_name: string
+  role: UserRole
+}
+
+export interface EstateInterest {
+  id: string
+  lead_id: string
+  lead_name: string
+  assigned_to: string | null
+  status: EstateInterestStatus
+  created_at: string
+  updated_at: string
+}
+
+export interface EstateVisit {
+  id: string
+  lead_id: string
+  lead_name: string
+  visited_by: string
+  visited_by_name: string
+  occurred_at: string
+  notes: string | null
+}
+
+export interface EstatePipeline {
+  interests: EstateInterest[]
+  visits: EstateVisit[]
 }
 
 export interface LocationSelection {

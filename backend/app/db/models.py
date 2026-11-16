@@ -57,6 +57,30 @@ class LeadStatus(str, Enum):
     LOST = "lost"
 
 
+class EstateType(str, Enum):
+    FLAT = "flat"
+    PLOT = "plot"
+    HOUSE = "house"
+    COMMERCIAL_LAND = "commercial_land"
+    FARMLAND = "farmland"
+    FARMHOUSE = "farmhouse"
+
+
+class EstateStatus(str, Enum):
+    AVAILABLE = "available"
+    UNDER_OFFER = "under_offer"
+    SOLD = "sold"
+    WITHDRAWN = "withdrawn"
+
+
+class EstateInterestStatus(str, Enum):
+    INTERESTED = "interested"
+    SITE_VISIT = "site_visit"
+    NEGOTIATION = "negotiation"
+    WON = "won"
+    LOST = "lost"
+
+
 class LeadSource(str, Enum):
     WEBSITE = "website"
     NINETY_NINE_ACRES = "99acres"
@@ -382,6 +406,130 @@ class Lead(TimestampMixin, Base):
             Lead.id == AIUsage.lead_id, Lead.team_id == AIUsage.team_id
         ),
     )
+
+
+class Estate(TimestampMixin, Base):
+    __tablename__ = "estates"
+    __table_args__ = (
+        UniqueConstraint("id", "team_id", name="uq_estates_id_team"),
+        ForeignKeyConstraint(
+            ["assigned_to", "team_id"],
+            ["users.id", "users.team_id"],
+            name="fk_estates_assignee_team",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint(
+            "asking_price_inr IS NULL OR asking_price_inr >= 0",
+            name="ck_estates_asking_price_nonnegative",
+        ),
+        Index("ix_estates_team_status", "team_id", "status"),
+        Index("ix_estates_team_type", "team_id", "estate_type"),
+        Index("ix_estates_team_assignee", "team_id", "assigned_to"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    team_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("teams.id", ondelete="RESTRICT"), nullable=False
+    )
+    assigned_to: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
+    title: Mapped[str] = mapped_column(String(160), nullable=False)
+    estate_type: Mapped[EstateType] = mapped_column(
+        enum_type(EstateType, "estate_type"), nullable=False
+    )
+    status: Mapped[EstateStatus] = mapped_column(
+        enum_type(EstateStatus, "estate_status"),
+        nullable=False,
+        default=EstateStatus.AVAILABLE,
+        server_default=text("'available'"),
+    )
+    location: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    asking_price_inr: Mapped[int | None] = mapped_column(Integer)
+    description: Mapped[str | None] = mapped_column(Text)
+    details: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False, default=dict)
+
+
+class EstateInterest(TimestampMixin, Base):
+    __tablename__ = "estate_interests"
+    __table_args__ = (
+        UniqueConstraint(
+            "estate_id",
+            "lead_id",
+            "team_id",
+            name="uq_estate_interests_estate_lead_team",
+        ),
+        ForeignKeyConstraint(
+            ["estate_id", "team_id"],
+            ["estates.id", "estates.team_id"],
+            name="fk_estate_interests_estate_team",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["lead_id", "team_id"],
+            ["leads.id", "leads.team_id"],
+            name="fk_estate_interests_lead_team",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["created_by", "team_id"],
+            ["users.id", "users.team_id"],
+            name="fk_estate_interests_creator_team",
+            ondelete="RESTRICT",
+        ),
+        Index("ix_estate_interests_team_estate_status", "team_id", "estate_id", "status"),
+        Index("ix_estate_interests_team_lead", "team_id", "lead_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    team_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("teams.id", ondelete="RESTRICT"), nullable=False
+    )
+    estate_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    lead_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    created_by: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    status: Mapped[EstateInterestStatus] = mapped_column(
+        enum_type(EstateInterestStatus, "estate_interest_status"),
+        nullable=False,
+        default=EstateInterestStatus.INTERESTED,
+        server_default=text("'interested'"),
+    )
+
+
+class EstateVisit(CreatedAtMixin, Base):
+    __tablename__ = "estate_visits"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["estate_id", "team_id"],
+            ["estates.id", "estates.team_id"],
+            name="fk_estate_visits_estate_team",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["lead_id", "team_id"],
+            ["leads.id", "leads.team_id"],
+            name="fk_estate_visits_lead_team",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["visited_by", "team_id"],
+            ["users.id", "users.team_id"],
+            name="fk_estate_visits_user_team",
+            ondelete="RESTRICT",
+        ),
+        Index("ix_estate_visits_team_estate_occurred", "team_id", "estate_id", "occurred_at"),
+        Index("ix_estate_visits_team_lead_occurred", "team_id", "lead_id", "occurred_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    team_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("teams.id", ondelete="RESTRICT"), nullable=False
+    )
+    estate_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    lead_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    visited_by: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    notes: Mapped[str | None] = mapped_column(Text)
 
 
 class Activity(CreatedAtMixin, Base):

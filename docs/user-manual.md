@@ -25,9 +25,9 @@ Your available pages and actions depend on your role and permissions.
 | Role | Typical access |
 |---|---|
 | Owner | All team CRM records and team-account administration. |
-| Manager | Team leads and follow-ups, plus agent-account administration. |
+| Manager | Team leads and estates, follow-ups, plus agent-account administration. |
 | Co-owner | Access determined by the owner-set read, write, delete, and user-management permissions. |
-| Agent | Leads assigned to you and their related follow-ups. |
+| Agent | Leads and estates assigned to you and their related follow-ups. |
 
 The backend enforces access on every request. If an action is missing or
 unavailable, ask your workspace administrator to check your role and
@@ -104,7 +104,28 @@ rejected records before importing them again.
 > **Screenshot placeholder - Leads and lead details:** Add the leads list and
 > lead detail images here.
 
-## 5. Follow-ups and activity
+## 5. Manage estates
+
+The **Estates** page is the team's internal property inventory; adding an
+estate does not publish it publicly.
+
+1. Select **Add estate**, enter a title, choose an estate type, and select a
+   verified location from the suggestions.
+2. Fill in the type-specific details (such as bedrooms and floor for a flat,
+   zoning and frontage for land, or acreage and water source for farmland).
+   Asking price and description are optional.
+3. Set the listing status and assign a seller. Search and filter the inventory
+   by title, location, estate type, and listing status.
+4. Expand an estate to link an existing lead, update that lead's estate
+   pipeline stage, and review visit history. Recording a site visit captures
+   the lead, the signed-in team member, the time, and optional notes.
+
+Estate pipeline stages are **Interested**, **Site visit**, **Negotiation**,
+**Won**, and **Lost**. Recording a visit moves a lead from Interested to Site
+visit; it does not move a lead already in a later stage backwards. Agents see
+only estates assigned to them and can link only leads they can already access.
+
+## 6. Follow-ups and activity
 
 - Add a follow-up from a lead's detail panel. Set a clear title and due date;
   include a short description when it helps the assignee.
@@ -116,7 +137,7 @@ rejected records before importing them again.
 > **Screenshot placeholder - Follow-ups and activity:** Add these page images
 > here.
 
-## 6. Team accounts
+## 7. Team accounts
 
 Owners, managers, and co-owners with user-management permission can access
 **Team**. Managers and co-owners can manage agent accounts; owners can manage
@@ -142,7 +163,7 @@ Contact details are not shown on this page.
 
 > **Screenshot placeholder - Org chart explorer:** Add the org chart image here.
 
-## 7. Profile, theme, and navigation
+## 8. Profile, theme, and navigation
 
 - Open your profile from the account area to update supported profile details
   or change your password.
@@ -159,7 +180,7 @@ Contact details are not shown on this page.
 > **Screenshot placeholder - Profile and privacy choices:** Add these images
 > here.
 
-## 8. Privacy and safe data handling
+## 9. Privacy and safe data handling
 
 UrbanNest uses a first-party cookie to remember your storage choice. If you
 allow optional preferences, first-party cookies also remember the theme and
@@ -173,7 +194,7 @@ entity, privacy contact, deployment providers and locations, retention details,
 and any applicable jurisdiction-specific information. Use fictional data in
 demos and contact your workspace operator for data requests.
 
-## 9. Troubleshooting
+## 10. Troubleshooting
 
 - **Sign-in fails:** Check your email and password. Ask an administrator for a
   reset if needed.

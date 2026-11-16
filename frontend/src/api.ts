@@ -86,6 +86,7 @@ export interface EstateInterest {
   lead_id: string
   lead_name: string
   assigned_to: string | null
+  assigned_to_name: string | null
   status: EstateInterestStatus
   created_at: string
   updated_at: string

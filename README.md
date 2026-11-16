@@ -2,6 +2,7 @@
 
 FastAPI and PostgreSQL backend with a React/TypeScript web app for a
 role-scoped real-estate CRM. The project includes lead and task workflows,
+an internal estate inventory with lead matching and site-visit tracking,
 AI-assisted lead endpoints, audit events, and server-enforced account
 permissions.
 
@@ -41,8 +42,8 @@ $env:PYTHONPATH = "."
 ## Frontend
 
 The CRM frontend lives in `frontend`. It includes sign-in and forced password
-change, role-scoped dashboard data, lead search and pipeline updates, lead
-details and activity, open and completed follow-ups, CSV import for
+change, role-scoped dashboard data, lead search and pipeline updates, estate
+inventory and buyer tracking, lead details and activity, open and completed follow-ups, CSV import for
 managers/owners, and a shared activity feed with links to related records.
 Owners and managers can manage team accounts and access; users can change their
 own password from their profile. The navigation can be collapsed, and the

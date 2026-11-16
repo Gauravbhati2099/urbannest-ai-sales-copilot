@@ -167,6 +167,7 @@ export function EstatePage({
   }, [onError, token])
 
   useEffect(() => {
+    // eslint-disable-next-line react/set-state-in-effect -- Load server-owned estate inventory when the page opens.
     void loadEstates()
   }, [loadEstates])
 
@@ -354,7 +355,7 @@ export function EstatePage({
                           ))}
                         </div>
                       ) : <p className="estate-muted">No leads linked yet.</p> : <p className="estate-muted">Loading buyer pipeline…</p>}
-                      {canWrite && estate.status !== 'sold' && estate.status !== 'withdrawn' && (
+                      {canWrite && estatePipeline && estate.status !== 'sold' && estate.status !== 'withdrawn' && (
                         <div className="estate-link-lead">
                           <label><span>Link an existing lead</span><select value={selectedLeadIds[estate.id] ?? ''} onChange={(event) => setSelectedLeadIds((current) => ({ ...current, [estate.id]: event.target.value }))}><option value="">Choose a lead…</option>{availableLeads.map((lead) => <option key={lead.id} value={lead.id}>{lead.full_name} · {lead.preferred_location ?? 'Location not set'}</option>)}</select></label>
                           <button className="button button-primary" disabled={!selectedLeadIds[estate.id]} onClick={() => void createInterest(estate)}>Link lead</button>
@@ -418,7 +419,7 @@ function EstateForm({
   const [locationUnverified, setLocationUnverified] = useState(false)
   const [askingPrice, setAskingPrice] = useState(initialEstate?.asking_price_inr?.toString() ?? '')
   const [description, setDescription] = useState(initialEstate?.description ?? '')
-  const [assignedTo, setAssignedTo] = useState(initialEstate?.assigned_to ?? (currentUser.role === 'agent' ? currentUser.id : ''))
+  const [assignedTo, setAssignedTo] = useState(initialEstate?.assigned_to ?? (currentUser.role === 'agent' || currentUser.role === 'owner' || currentUser.role === 'co_owner' ? currentUser.id : ''))
   const [details, setDetails] = useState<Record<string, string>>(() => detailsForForm(initialEstate, initialEstate?.estate_type ?? 'flat'))
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState('')

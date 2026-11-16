@@ -191,6 +191,36 @@ Activities have `type` (`call`, `note`, `site_visit`, `status_change`, `email`,
 timezone-aware `occurred_at` (defaults to the current time). Adding an activity
 marks any existing AI lead score stale.
 
+## Estates and buyer tracking
+
+| Method and path | Access | Purpose and response |
+|---|---|---|
+| `GET /api/v1/estates` | Authenticated | List visible estates with pagination and optional type, status, and text filters. |
+| `GET /api/v1/estates/assignees` | Authenticated | List active team members available for estate assignment under the caller's role. |
+| `POST /api/v1/estates` | Authenticated | Create a team estate; agents are assigned to themselves by default. |
+| `GET /api/v1/estates/{estate_id}` | Authenticated | Read one visible estate. |
+| `PATCH /api/v1/estates/{estate_id}` | Authenticated | Partially update an estate; type changes must include compatible details. |
+| `GET /api/v1/estates/{estate_id}/pipeline` | Authenticated | Return linked leads and site-visit history. |
+| `POST /api/v1/estates/{estate_id}/interests` | Authenticated | Link an accessible lead to an available estate. |
+| `PATCH /api/v1/estates/{estate_id}/interests/{lead_id}` | Authenticated | Update the lead's estate-specific sales stage. |
+| `POST /api/v1/estates/{estate_id}/visits` | Authenticated | Record an attended site visit and optional notes; defaults to the current time and caller. |
+
+Estate types are `flat`, `plot`, `house`, `commercial_land`, `farmland`, and
+`farmhouse`; listing statuses are `available`, `under_offer`, `sold`, and
+`withdrawn`. The `details` object accepts a fixed type-specific field set
+(for example, bedrooms and built-up area for a flat, plot area and zoning for
+land, and acreage and water source for farmland). Location uses the same
+verified structured location shape as leads; prices are non-negative integer
+INR amounts.
+
+An estate interest starts at `interested`; its stages are `site_visit`,
+`negotiation`, `won`, and `lost`. Recording a visit moves an interested lead
+to `site_visit`, while preserving later stages. Visit history captures the
+lead, recording team member, timestamp, and optional notes. Owners and
+managers can access team estates; agents can access only estates assigned to
+them and cannot link leads outside their existing lead scope. Estate listings
+are internal to the workspace and are not publicly published.
+
 ### CSV import
 
 Send a multipart form upload with the field name `file` and a UTF-8 CSV file.

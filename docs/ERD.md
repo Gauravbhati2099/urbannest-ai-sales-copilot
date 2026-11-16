@@ -8,8 +8,16 @@
 erDiagram
     TEAMS ||--o{ USERS : has
     TEAMS ||--o{ LEADS : owns
+    TEAMS ||--o{ ESTATES : owns
     USERS ||--o{ LEADS : assigned_to
     USERS ||--o{ LEADS : created_by
+    USERS o|--o{ ESTATES : assigned_to
+    ESTATES ||--o{ ESTATE_INTERESTS : tracks
+    LEADS ||--o{ ESTATE_INTERESTS : considers
+    USERS ||--o{ ESTATE_INTERESTS : created_by
+    ESTATES ||--o{ ESTATE_VISITS : records
+    LEADS ||--o{ ESTATE_VISITS : attends
+    USERS ||--o{ ESTATE_VISITS : visited_by
     TEAMS ||--o{ ACTIVITIES : owns
     LEADS ||--o{ ACTIVITIES : records
     USERS ||--o{ ACTIVITIES : performs
@@ -61,6 +69,40 @@ erDiagram
         text notes
         timestamptz created_at
         timestamptz updated_at
+    }
+    ESTATES {
+        uuid id PK
+        uuid team_id FK
+        uuid assigned_to FK
+        text title
+        text estate_type
+        text status
+        jsonb location
+        integer asking_price_inr
+        text description
+        jsonb details
+        timestamptz created_at
+        timestamptz updated_at
+    }
+    ESTATE_INTERESTS {
+        uuid id PK
+        uuid team_id FK
+        uuid estate_id FK
+        uuid lead_id FK
+        uuid created_by FK
+        text status
+        timestamptz created_at
+        timestamptz updated_at
+    }
+    ESTATE_VISITS {
+        uuid id PK
+        uuid team_id FK
+        uuid estate_id FK
+        uuid lead_id FK
+        uuid visited_by FK
+        timestamptz occurred_at
+        text notes
+        timestamptz created_at
     }
     ACTIVITIES {
         uuid id PK
@@ -143,6 +185,8 @@ erDiagram
 
 - Every user belongs to exactly one team in this assessment. The email address is globally unique for simple login lookup.
 - Every lead belongs to a team. Its optional creator and optional assignee, when present, must belong to that same team. Public form leads may have no authenticated creator.
+- Estates, estate-to-lead interests, and site visits are team-scoped. Composite foreign keys keep their estate, lead, assigned seller, creator, and visit recorder within one team. Agents see only estates assigned to them and leads they can already access.
+- Estate type-specific details are stored as JSON but validated against a fixed field set for each type (`flat`, `plot`, `house`, `commercial_land`, `farmland`, `farmhouse`); interest stages and visit events remain separate records.
 - Activity, task, score and message rows carry `team_id`; composite foreign keys to `(id, team_id)` on users/leads ensure these rows cannot reference a lead or user from a different team. System-generated activities may have no human actor.
 - AI usage belongs to a team and requesting user; `lead_id` is optional for non-lead-specific AI operations.
 - `tasks.assigned_to` is required: every reminder must have a clear owner. Assign a task when it is created; do not create an unassigned task.
@@ -156,6 +200,8 @@ erDiagram
 
 - User role: `owner`, `manager`, `agent`.
 - Lead stage: `new`, `contacted`, `site_visit`, `negotiation`, `won`, `lost`.
+- Estate type: `flat`, `plot`, `house`, `commercial_land`, `farmland`, `farmhouse`; listing status: `available`, `under_offer`, `sold`, `withdrawn`.
+- Estate interest stage: `interested`, `site_visit`, `negotiation`, `won`, `lost`.
 - Lead source: `website`, `99acres`, `magicbricks`, `instagram`, `whatsapp`, `walk_in`, `manual`, `csv_import`, `other`.
 - Activity type: `call`, `note`, `site_visit`, `status_change`, `assignment_change`, `email`, `whatsapp`, `other`; actor may be null for system/public events.
 - Task status: `open`, `completed`, `cancelled`; overdue is derived from `due_at` and open status, not stored.
@@ -168,6 +214,9 @@ erDiagram
 ## Indexes
 
 - `leads(team_id, status)`, `leads(team_id, assigned_to, status)`, `leads(team_id, created_at)`.
+- `estates(team_id, status)`, `estates(team_id, estate_type)`, `estates(team_id, assigned_to)`.
+- `estate_interests(team_id, estate_id, status)`, `estate_interests(team_id, lead_id)`.
+- `estate_visits(team_id, estate_id, occurred_at)`, `estate_visits(team_id, lead_id, occurred_at)`.
 - `activities(team_id, lead_id, occurred_at DESC)`.
 - `tasks(team_id, assigned_to, status, due_at)` and `tasks(team_id, lead_id, due_at)`.
 - `ai_scores(team_id, lead_id, created_at DESC)`; query latest non-stale score.

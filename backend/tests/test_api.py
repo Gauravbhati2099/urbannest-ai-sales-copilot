@@ -2046,6 +2046,181 @@ class APIAuthAndAuthorizationTests(unittest.TestCase):
             self.assertEqual(usage.status, AIUsageStatus.TIMED_OUT)
             self.assertEqual(usage.error_category, "provider_timeout")
 
+    def test_estate_inventory_pipeline_and_site_visit_history(self) -> None:
+        owner_token = self.login("owner@example.test")
+        estate_response = self.client.post(
+            "/api/v1/estates",
+            headers={"Authorization": f"Bearer {owner_token}"},
+            json={
+                "title": "Baner garden flat",
+                "estate_type": "flat",
+                "location": {
+                    "display_name": "Baner, Pune, Maharashtra, India",
+                    "city": "Pune",
+                    "state": "Maharashtra",
+                    "country": "India",
+                    "country_code": "IN",
+                    "latitude": 18.559,
+                    "longitude": 73.786,
+                },
+                "asking_price_inr": 12000000,
+                "details": {
+                    "bedrooms": 2,
+                    "bathrooms": 2,
+                    "built_up_area_sqft": 1200,
+                    "floor_number": 3,
+                    "total_floors": 10,
+                },
+                "assigned_to": str(self.agent_id),
+            },
+        )
+        self.assertEqual(estate_response.status_code, 201, estate_response.text)
+        estate = estate_response.json()
+        self.assertEqual(estate["estate_type"], "flat")
+        self.assertEqual(estate["assigned_to"], str(self.agent_id))
+
+        assignees_response = self.client.get(
+            "/api/v1/estates/assignees",
+            headers={"Authorization": f"Bearer {owner_token}"},
+        )
+        self.assertEqual(assignees_response.status_code, 200, assignees_response.text)
+        self.assertIn(str(self.agent_id), {item["id"] for item in assignees_response.json()})
+        listing_response = self.client.get(
+            "/api/v1/estates?estate_type=flat&q=Baner",
+            headers={"Authorization": f"Bearer {owner_token}"},
+        )
+        self.assertEqual(listing_response.status_code, 200, listing_response.text)
+        self.assertEqual([item["id"] for item in listing_response.json()], [estate["id"]])
+
+        link_response = self.client.post(
+            f"/api/v1/estates/{estate['id']}/interests",
+            headers={"Authorization": f"Bearer {owner_token}"},
+            json={"lead_id": str(self.lead_id)},
+        )
+        self.assertEqual(link_response.status_code, 201, link_response.text)
+        self.assertEqual(link_response.json()["status"], "interested")
+
+        visit_response = self.client.post(
+            f"/api/v1/estates/{estate['id']}/visits",
+            headers={"Authorization": f"Bearer {owner_token}"},
+            json={"lead_id": str(self.lead_id), "notes": "Interested in a second visit"},
+        )
+        self.assertEqual(visit_response.status_code, 201, visit_response.text)
+        self.assertEqual(visit_response.json()["lead_id"], str(self.lead_id))
+        self.assertEqual(visit_response.json()["visited_by_name"], "owner")
+
+        visited_pipeline = self.client.get(
+            f"/api/v1/estates/{estate['id']}/pipeline",
+            headers={"Authorization": f"Bearer {owner_token}"},
+        )
+        self.assertEqual(visited_pipeline.status_code, 200, visited_pipeline.text)
+        self.assertEqual(
+            visited_pipeline.json()["interests"][0]["status"], "site_visit"
+        )
+
+        stage_response = self.client.patch(
+            f"/api/v1/estates/{estate['id']}/interests/{self.lead_id}",
+            headers={"Authorization": f"Bearer {owner_token}"},
+            json={"status": "negotiation"},
+        )
+        self.assertEqual(stage_response.status_code, 200, stage_response.text)
+        self.assertEqual(stage_response.json()["status"], "negotiation")
+
+        pipeline_response = self.client.get(
+            f"/api/v1/estates/{estate['id']}/pipeline",
+            headers={"Authorization": f"Bearer {owner_token}"},
+        )
+        self.assertEqual(pipeline_response.status_code, 200, pipeline_response.text)
+        pipeline = pipeline_response.json()
+        self.assertEqual(pipeline["interests"][0]["status"], "negotiation")
+        self.assertEqual(pipeline["interests"][0]["assigned_to_name"], "agent")
+        self.assertEqual(pipeline["visits"][0]["notes"], "Interested in a second visit")
+
+        agent_token = self.login("agent@example.test")
+        agent_pipeline = self.client.get(
+            f"/api/v1/estates/{estate['id']}/pipeline",
+            headers={"Authorization": f"Bearer {agent_token}"},
+        )
+        self.assertEqual(agent_pipeline.status_code, 200, agent_pipeline.text)
+        self.assertEqual(len(agent_pipeline.json()["visits"]), 1)
+
+        other_agent_token = self.login("other.agent@example.test")
+        hidden_estate = self.client.get(
+            f"/api/v1/estates/{estate['id']}",
+            headers={"Authorization": f"Bearer {other_agent_token}"},
+        )
+        self.assertEqual(hidden_estate.status_code, 404)
+
+        manager_estate = self.client.post(
+            "/api/v1/estates",
+            headers={"Authorization": f"Bearer {owner_token}"},
+            json={
+                "title": "Manager-assigned land",
+                "estate_type": "commercial_land",
+                "location": {
+                    "display_name": "Pune, India",
+                    "country": "India",
+                    "country_code": "IN",
+                    "latitude": 18.52,
+                    "longitude": 73.85,
+                },
+                "assigned_to": str(self.manager_id),
+            },
+        )
+        self.assertEqual(manager_estate.status_code, 201, manager_estate.text)
+        manager_token = self.login("manager@example.test")
+        manager_update = self.client.patch(
+            f"/api/v1/estates/{manager_estate.json()['id']}",
+            headers={"Authorization": f"Bearer {manager_token}"},
+            json={"status": "under_offer", "assigned_to": str(self.manager_id)},
+        )
+        self.assertEqual(manager_update.status_code, 200, manager_update.text)
+        self.assertEqual(manager_update.json()["status"], "under_offer")
+
+    def test_estate_rejects_type_mismatched_details_and_inaccessible_leads(self) -> None:
+        owner_token = self.login("owner@example.test")
+        estate_response = self.client.post(
+            "/api/v1/estates",
+            headers={"Authorization": f"Bearer {owner_token}"},
+            json={
+                "title": "Incorrect flat details",
+                "estate_type": "flat",
+                "location": {
+                    "display_name": "Pune, India",
+                    "country": "India",
+                    "country_code": "IN",
+                    "latitude": 18.52,
+                    "longitude": 73.85,
+                },
+                "details": {"zoning": "residential"},
+            },
+        )
+        self.assertEqual(estate_response.status_code, 422)
+
+        valid_response = self.client.post(
+            "/api/v1/estates",
+            headers={"Authorization": f"Bearer {owner_token}"},
+            json={
+                "title": "Available plot",
+                "estate_type": "plot",
+                "location": {
+                    "display_name": "Pune, India",
+                    "country": "India",
+                    "country_code": "IN",
+                    "latitude": 18.52,
+                    "longitude": 73.85,
+                },
+                "details": {"plot_area_sqft": 1800, "zoning": "residential"},
+            },
+        )
+        self.assertEqual(valid_response.status_code, 201, valid_response.text)
+
+        inaccessible_response = self.client.post(
+            f"/api/v1/estates/{valid_response.json()['id']}/interests",
+            headers={"Authorization": f"Bearer {owner_token}"},
+            json={"lead_id": str(self.external_lead_id)},
+        )
+        self.assertEqual(inaccessible_response.status_code, 404)
 
 
 if __name__ == "__main__":

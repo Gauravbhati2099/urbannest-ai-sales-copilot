@@ -234,7 +234,11 @@ def update_estate(
     if any(value is None and key not in nullable_fields for key, value in changes.items()):
         raise HTTPException(status_code=422, detail="Required estate fields cannot be null")
 
-    if "assigned_to" in changes and changes["assigned_to"] is not None:
+    if (
+        "assigned_to" in changes
+        and changes["assigned_to"] is not None
+        and changes["assigned_to"] != estate.assigned_to
+    ):
         if current_user.role is UserRole.AGENT and not current_user.is_superuser:
             if changes["assigned_to"] != current_user.id:
                 raise HTTPException(status_code=403, detail="Forbidden")

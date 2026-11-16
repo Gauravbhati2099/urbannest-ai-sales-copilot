@@ -13,6 +13,12 @@ from sqlalchemy.orm import Session
 from app.db.models import (
     Activity,
     ActivityType,
+    Estate,
+    EstateInterest,
+    EstateInterestStatus,
+    EstateStatus,
+    EstateType,
+    EstateVisit,
     Lead,
     LeadSource,
     LeadStatus,
@@ -26,6 +32,34 @@ from app.db.models import (
 TEAM_NAME = "UrbanNest Realty - Demo"
 DEMO_EMAIL_DOMAIN = "demo.urbannest.example.invalid"
 MOCK_PHONE_PREFIX = "+1 (202) 555-01"
+ESTATE_TYPES = tuple(EstateType)
+ESTATE_STATUSES = tuple(EstateStatus)
+ESTATE_BASE_PRICES_INR = {
+    EstateType.FLAT: 5_000_000,
+    EstateType.PLOT: 3_000_000,
+    EstateType.HOUSE: 10_000_000,
+    EstateType.COMMERCIAL_LAND: 14_000_000,
+    EstateType.FARMLAND: 1_500_000,
+    EstateType.FARMHOUSE: 18_000_000,
+}
+ESTATE_LOCATIONS = (
+    ("Baner", "Pune", "Maharashtra", 18.5590, 73.7868),
+    ("Wakad", "Pune", "Maharashtra", 18.5975, 73.7638),
+    ("Hinjawadi", "Pune", "Maharashtra", 18.5912, 73.7389),
+    ("Kharadi", "Pune", "Maharashtra", 18.5514, 73.9420),
+    ("Hadapsar", "Pune", "Maharashtra", 18.5089, 73.9260),
+    ("Aundh", "Pune", "Maharashtra", 18.5590, 73.8077),
+    ("Kothrud", "Pune", "Maharashtra", 18.5074, 73.8077),
+    ("Viman Nagar", "Pune", "Maharashtra", 18.5679, 73.9143),
+    ("Pashan", "Pune", "Maharashtra", 18.5390, 73.7890),
+    ("Pimpri", "Pune", "Maharashtra", 18.6298, 73.7997),
+    ("Powai", "Mumbai", "Maharashtra", 19.1176, 72.9060),
+    ("Thane West", "Thane", "Maharashtra", 19.2183, 72.9781),
+    ("Whitefield", "Bengaluru", "Karnataka", 12.9698, 77.7500),
+    ("Sarjapur", "Bengaluru", "Karnataka", 12.9100, 77.6870),
+    ("Gachibowli", "Hyderabad", "Telangana", 17.4401, 78.3489),
+    ("Kondapur", "Hyderabad", "Telangana", 17.4604, 78.3560),
+)
 
 
 @dataclass(frozen=True)
@@ -391,6 +425,82 @@ def _local_due_at(days_from_today: int, hour: int) -> datetime:
     return local_due.astimezone(timezone.utc)
 
 
+def _estate_title(number: int, estate_type: EstateType, locality: str) -> str:
+    type_name = estate_type.value.replace("_", " ").title()
+    return f"Synthetic demo estate {number:03d} - {type_name} in {locality}"
+
+
+def _estate_details(number: int, estate_type: EstateType) -> dict[str, int | float | str]:
+    variation = number % 5
+    furnishing = ("unfurnished", "semi-furnished", "furnished")[number % 3]
+    if estate_type is EstateType.FLAT:
+        return {
+            "bedrooms": (number % 3) + 1,
+            "bathrooms": (number % 2) + 1,
+            "built_up_area_sqft": 650 + variation * 125,
+            "floor_number": (number % 9) + 1,
+            "total_floors": 12,
+            "parking_spaces": number % 3,
+            "furnishing": furnishing,
+        }
+    if estate_type is EstateType.PLOT:
+        return {
+            "plot_area_sqft": 1_200 + variation * 400,
+            "frontage_ft": 30 + variation * 5,
+            "depth_ft": 40 + variation * 8,
+            "zoning": ("residential", "mixed-use")[number % 2],
+            "facing": ("north", "east", "south", "west")[number % 4],
+        }
+    if estate_type is EstateType.HOUSE:
+        return {
+            "bedrooms": (number % 4) + 2,
+            "bathrooms": (number % 3) + 2,
+            "built_up_area_sqft": 1_400 + variation * 250,
+            "plot_area_sqft": 2_000 + variation * 500,
+            "floors": (number % 3) + 1,
+            "parking_spaces": (number % 3) + 1,
+            "furnishing": furnishing,
+        }
+    if estate_type is EstateType.COMMERCIAL_LAND:
+        return {
+            "plot_area_sqft": 4_000 + variation * 1_000,
+            "frontage_ft": 50 + variation * 10,
+            "zoning": ("commercial", "industrial")[number % 2],
+        }
+    if estate_type is EstateType.FARMLAND:
+        return {
+            "land_area_acres": 2.5 + variation * 1.25,
+            "water_source": ("borewell", "canal", "rain-fed")[number % 3],
+            "soil_type": ("alluvial", "black cotton", "red loam")[number % 3],
+        }
+    return {
+        "bedrooms": (number % 4) + 2,
+        "bathrooms": (number % 3) + 2,
+        "built_up_area_sqft": 1_800 + variation * 300,
+        "land_area_acres": 1.0 + variation * 0.5,
+        "parking_spaces": (number % 4) + 1,
+        "water_source": ("borewell", "well", "municipal")[number % 3],
+        "furnishing": furnishing,
+    }
+
+
+def _estate_location(number: int) -> tuple[str, dict[str, object]]:
+    locality, city, state, latitude, longitude = ESTATE_LOCATIONS[
+        (number - 1) % len(ESTATE_LOCATIONS)
+    ]
+    return locality, {
+        "display_name": f"{locality}, {city}, {state}, India",
+        "city": city,
+        "state": state,
+        "country": "India",
+        "country_code": "IN",
+        "latitude": latitude,
+        "longitude": longitude,
+        "osm_type": None,
+        "osm_id": None,
+    }
+
+
 def seed_demo_data(session: Session) -> tuple[list[str], str | None]:
     password_hash = PasswordHash.recommended()
 
@@ -639,6 +749,161 @@ def seed_demo_data(session: Session) -> tuple[list[str], str | None]:
             task.title = task_title
             task.description = task_description
 
+    seeded_lead_emails = {
+        _lead_email(number, LEAD_NAMES[number - 1])
+        for number in range(1, 51)
+    }
+    seeded_leads = session.scalars(
+        select(Lead).where(
+            Lead.team_id == team.id,
+            Lead.email.in_(seeded_lead_emails),
+        )
+    ).all()
+    leads_by_email = {lead.email: lead for lead in seeded_leads}
+    if len(leads_by_email) != 50:
+        raise RuntimeError("Expected 50 seeded demo leads before adding estate data")
+
+    now = datetime.now(timezone.utc)
+    estate_seeds: list[
+        tuple[int, Estate, Lead, User, EstateType, EstateStatus, EstateInterestStatus]
+    ] = []
+    for number in range(1, 51):
+        estate_type = ESTATE_TYPES[(number - 1) % len(ESTATE_TYPES)]
+        estate_status = ESTATE_STATUSES[(number - 1) % len(ESTATE_STATUSES)]
+        interest_status = {
+            EstateStatus.AVAILABLE: (
+                EstateInterestStatus.INTERESTED
+                if (number // len(ESTATE_STATUSES)) % 2 == 0
+                else EstateInterestStatus.SITE_VISIT
+            ),
+            EstateStatus.UNDER_OFFER: EstateInterestStatus.NEGOTIATION,
+            EstateStatus.SOLD: EstateInterestStatus.WON,
+            EstateStatus.WITHDRAWN: EstateInterestStatus.LOST,
+        }[estate_status]
+        locality, location = _estate_location(number)
+        title = _estate_title(number, estate_type, locality)
+        description_marker = f"Synthetic demo estate {number:03d}:"
+        description = (
+            f"{description_marker} fictional listing with sample ownership and "
+            f"condition details for {locality}. Not a real property."
+        )
+        matches = session.scalars(
+            select(Estate).where(Estate.team_id == team.id, Estate.title == title)
+        ).all()
+        if len(matches) > 1:
+            raise RuntimeError(
+                f"Multiple estates match seeded demo estate {number:03d}; "
+                "refusing ambiguous seed"
+            )
+        estate = matches[0] if matches else None
+        if estate is not None and not (estate.description or "").startswith(
+            description_marker
+        ):
+            raise RuntimeError(
+                f"Estate title for demo estate {number:03d} is already in use; "
+                "refusing to overwrite"
+            )
+
+        lead_email = _lead_email(number, LEAD_NAMES[number - 1])
+        lead = leads_by_email[lead_email]
+        assigned_agent = agents[(number - 1) % len(agents)]
+        estate_values = {
+            "team_id": team.id,
+            "assigned_to": assigned_agent.id,
+            "title": title,
+            "estate_type": estate_type,
+            "status": estate_status,
+            "location": location,
+            "asking_price_inr": ESTATE_BASE_PRICES_INR[estate_type]
+            + (number % 9) * 250_000,
+            "description": description,
+            "details": _estate_details(number, estate_type),
+        }
+        if estate is None:
+            estate = Estate(
+                **estate_values,
+                created_at=now - timedelta(days=120 + (number * 7) % 180),
+            )
+            session.add(estate)
+        else:
+            for field, value in estate_values.items():
+                setattr(estate, field, value)
+        estate_seeds.append(
+            (number, estate, lead, assigned_agent, estate_type, estate_status, interest_status)
+        )
+
+    session.flush()
+    for number, estate, lead, assigned_agent, _, _, interest_status in estate_seeds:
+        interests = session.scalars(
+            select(EstateInterest).where(
+                EstateInterest.team_id == team.id,
+                EstateInterest.estate_id == estate.id,
+                EstateInterest.lead_id == lead.id,
+            )
+        ).all()
+        if len(interests) > 1:
+            raise RuntimeError(
+                f"Multiple seeded interests found for demo estate {number:03d}; "
+                "refusing ambiguous seed"
+            )
+        if interests:
+            interest = interests[0]
+            interest.created_by = owner.id
+            interest.status = interest_status
+        else:
+            session.add(
+                EstateInterest(
+                    team_id=team.id,
+                    estate_id=estate.id,
+                    lead_id=lead.id,
+                    created_by=owner.id,
+                    status=interest_status,
+                )
+            )
+
+        visit_count = 1 + (number - 1) % 3
+        for visit_number in range(1, visit_count + 1):
+            marker = (
+                f"Synthetic demo estate visit {number:03d}-{visit_number:02d}: "
+                f"{lead.full_name} viewed {estate.title}."
+            )
+            visits = session.scalars(
+                select(EstateVisit).where(
+                    EstateVisit.team_id == team.id,
+                    EstateVisit.estate_id == estate.id,
+                    EstateVisit.notes == marker,
+                )
+            ).all()
+            if len(visits) > 1:
+                raise RuntimeError(
+                    f"Multiple seeded visits found for demo estate {number:03d}; "
+                    "refusing ambiguous seed"
+                )
+            if visits:
+                visit = visits[0]
+                visit.lead_id = lead.id
+                visit.visited_by = assigned_agent.id
+            else:
+                days_ago = (
+                    12
+                    + number % 45
+                    + (visit_count - visit_number) * 5
+                )
+                session.add(
+                    EstateVisit(
+                        team_id=team.id,
+                        estate_id=estate.id,
+                        lead_id=lead.id,
+                        visited_by=assigned_agent.id,
+                        occurred_at=now
+                        - timedelta(
+                            days=days_ago,
+                            hours=(number * 3 + visit_number) % 24,
+                        ),
+                        notes=marker,
+                    )
+                )
+
     session.flush()
     return new_emails, demo_password
 
@@ -656,7 +921,7 @@ def main() -> None:
         print(f"Shared demo password: {demo_password}")
     else:
         print("Existing account passwords were not changed.")
-    print("Synthetic profile, lead, activity, and task data are ready.")
+    print("Synthetic profile, lead, activity, task, and estate data are ready.")
 
 
 if __name__ == "__main__":

@@ -20,11 +20,11 @@ Create the initial PostgreSQL schema from the finalized SQLAlchemy ORM, then add
    - Revision `d943dc36f66f` applied; all eight application tables were verified.
    - `alembic check` reports no schema differences from the ORM.
 4. **Seed demo data** — complete
-   - Run an idempotent seed script: one UrbanNest team, one owner, two managers, twelve agents, 50 fictional leads, timeline activities, and assigned tasks with overdue/today/upcoming examples.
+   - Run an idempotent seed script: one UrbanNest team, one owner, two managers, twelve agents, 50 fictional leads, 50 estates across six property types, lead interests, dated site visits, timeline activities, and assigned tasks with overdue/today/upcoming examples.
    - Use `.invalid` email addresses and no real contact details.
-   - Seeded 1 team, 15 users, 50 leads, 50 activities, and 50 tasks. No AI scores/messages/usage rows are fabricated.
+   - Seeded 1 team, 15 users, 50 leads, 50 estates, 50 estate interests, 99 site visits, 50 activities, and 50 tasks. No AI scores/messages/usage rows are fabricated.
    - All 15 passwords are Argon2 hashes. A random shared demo password was printed once after commit; passwords are not written to source files.
-   - Re-running the seed adds no duplicate team, accounts, leads, activities, or tasks.
+   - Re-running the seed adds no duplicate team, accounts, leads, activities, tasks, estates, interests, or site visits.
 5. **Verify** — complete
    - Query table and seeded-record counts.
    - Confirm generated accounts have role values and password hashes, not plaintext passwords.

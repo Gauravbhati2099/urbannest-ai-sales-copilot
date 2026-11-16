@@ -7,7 +7,21 @@ from sqlalchemy.orm import Session
 from pwdlib import PasswordHash
 
 from app.db.base import Base
-from app.db.models import Activity, Lead, Task, Team, User, UserRole
+from app.db.models import (
+    Activity,
+    Estate,
+    EstateInterest,
+    EstateInterestStatus,
+    EstateStatus,
+    EstateType,
+    EstateVisit,
+    Lead,
+    Task,
+    Team,
+    User,
+    UserRole,
+)
+from app.modules.estates.schemas import EstateCreate
 from scripts.seed_demo import DEMO_USERS, LEAD_NAMES, TEAM_NAME, seed_demo_data
 
 
@@ -42,6 +56,55 @@ class DemoSeedTests(unittest.TestCase):
         self.assertEqual(self.session.scalar(select(func.count()).select_from(Lead)), 50)
         self.assertEqual(self.session.scalar(select(func.count()).select_from(Activity)), 50)
         self.assertEqual(self.session.scalar(select(func.count()).select_from(Task)), 50)
+        estates = self.session.scalars(select(Estate)).all()
+        self.assertEqual(len(estates), 50)
+        self.assertEqual(len({estate.title for estate in estates}), 50)
+        self.assertEqual({estate.estate_type for estate in estates}, set(EstateType))
+        self.assertEqual({estate.status for estate in estates}, set(EstateStatus))
+        self.assertTrue(
+            all(
+                estate.description is not None
+                and estate.description.startswith("Synthetic demo estate ")
+                and estate.asking_price_inr is not None
+                and estate.assigned_to is not None
+                and estate.location["country_code"] == "IN"
+                for estate in estates
+            )
+        )
+        for estate in estates:
+            EstateCreate.model_validate(
+                {
+                    "title": estate.title,
+                    "estate_type": estate.estate_type,
+                    "status": estate.status,
+                    "location": estate.location,
+                    "asking_price_inr": estate.asking_price_inr,
+                    "description": estate.description,
+                    "details": estate.details,
+                    "assigned_to": estate.assigned_to,
+                }
+            )
+        interests = self.session.scalars(select(EstateInterest)).all()
+        self.assertEqual(len(interests), 50)
+        self.assertEqual(
+            {interest.status for interest in interests},
+            set(EstateInterestStatus),
+        )
+        visits = self.session.scalars(select(EstateVisit)).all()
+        self.assertGreaterEqual(len(visits), 50)
+        self.assertEqual(
+            {visit.estate_id for visit in visits},
+            {estate.id for estate in estates},
+        )
+        self.assertGreater(len({visit.occurred_at for visit in visits}), 1)
+        self.assertTrue(
+            all(
+                visit.occurred_at is not None
+                and visit.notes is not None
+                and visit.notes.startswith("Synthetic demo estate visit ")
+                for visit in visits
+            )
+        )
         users = self.session.scalars(select(User)).all()
         self.assertEqual(
             {user.role for user in users},
@@ -122,6 +185,14 @@ class DemoSeedTests(unittest.TestCase):
         self.assertEqual(self.session.scalar(select(func.count()).select_from(Lead)), 50)
         self.assertEqual(self.session.scalar(select(func.count()).select_from(Activity)), 50)
         self.assertEqual(self.session.scalar(select(func.count()).select_from(Task)), 50)
+        self.assertEqual(self.session.scalar(select(func.count()).select_from(Estate)), 50)
+        self.assertEqual(
+            self.session.scalar(select(func.count()).select_from(EstateInterest)), 50
+        )
+        self.assertEqual(
+            self.session.scalar(select(func.count()).select_from(EstateVisit)),
+            len(visits),
+        )
 
     def test_seed_upgrades_legacy_demo_records_without_duplicating_them(self) -> None:
         seed_demo_data(self.session)
@@ -165,6 +236,13 @@ class DemoSeedTests(unittest.TestCase):
         self.assertEqual(self.session.scalar(select(func.count()).select_from(Lead)), 50)
         self.assertEqual(self.session.scalar(select(func.count()).select_from(Activity)), 50)
         self.assertEqual(self.session.scalar(select(func.count()).select_from(Task)), 50)
+        self.assertEqual(self.session.scalar(select(func.count()).select_from(Estate)), 50)
+        self.assertEqual(
+            self.session.scalar(select(func.count()).select_from(EstateInterest)), 50
+        )
+        self.assertGreaterEqual(
+            self.session.scalar(select(func.count()).select_from(EstateVisit)), 50
+        )
         for demo_user in DEMO_USERS:
             user = self.session.scalar(
                 select(User).where(User.email == demo_user.email)

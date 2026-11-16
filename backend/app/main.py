@@ -24,20 +24,6 @@ def create_app() -> FastAPI:
         raise RuntimeError("APP_TIMEZONE must be a valid IANA timezone") from exc
 
     app = FastAPI(title=os.getenv("APP_NAME", "Infinaut CRM API"), version="1.0.0")
-    origins = [
-        origin.strip()
-        for origin in os.getenv("CORS_ORIGINS", "").split(",")
-        if origin.strip()
-    ]
-    if origins:
-        app.add_middleware(
-            CORSMiddleware,
-            allow_origins=origins,
-            allow_credentials=True,
-            allow_methods=["GET", "POST", "PATCH"],
-            allow_headers=["Authorization", "Content-Type"],
-        )
-
     app.include_router(auth_router, prefix=api_prefix)
     app.include_router(users_router, prefix=api_prefix)
     app.include_router(audit_router, prefix=api_prefix)
@@ -55,4 +41,20 @@ def create_app() -> FastAPI:
     return app
 
 
-app = create_app()
+api_app = create_app()
+cors_origins = [
+    origin.strip()
+    for origin in os.getenv("CORS_ORIGINS", "").split(",")
+    if origin.strip()
+]
+app = (
+    CORSMiddleware(
+        api_app,
+        allow_origins=cors_origins,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PATCH"],
+        allow_headers=["Authorization", "Content-Type"],
+    )
+    if cors_origins
+    else api_app
+)

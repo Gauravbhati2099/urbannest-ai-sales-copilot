@@ -71,6 +71,8 @@ type Page = 'overview' | 'leads' | 'tasks' | 'activity' | 'team' | 'org-chart' |
 type Theme = 'light' | 'dark'
 type LeadSortKey = 'name' | 'contact' | 'requirement' | 'source' | 'stage' | 'added'
 type SortDirection = 'ascending' | 'descending'
+type SlicerOption = { value: string; label: string }
+type TaskCategory = 'all' | 'today' | 'overdue' | 'completed'
 
 const STORAGE_CONSENT_KEY = 'urbannest_storage_consent'
 const THEME_COOKIE = 'urbannest_theme'
@@ -188,6 +190,82 @@ function budgetRange(lead: Lead) {
   return formatCurrency(lead.budget_min_inr ?? lead.budget_max_inr)
 }
 
+function slicerIncludes(selection: string[] | null, value: string) {
+  return selection === null || selection.includes(value)
+}
+
+function FilterSlicer({ label, options, selectedValues, onChange, compact = false }: {
+  label: string
+  options: SlicerOption[]
+  selectedValues: string[] | null
+  onChange: (selection: string[] | null) => void
+  compact?: boolean
+}) {
+  const [open, setOpen] = useState(false)
+  const [search, setSearch] = useState('')
+  const slicerRef = useRef<HTMLDivElement>(null)
+  const filteredOptions = options.filter((option) => option.label.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()))
+  const selectedCount = selectedValues === null ? options.length : selectedValues.length
+  const summary = selectedValues === null
+    ? 'All'
+    : selectedCount === 0
+      ? 'None'
+      : `${selectedCount} selected`
+
+  useEffect(() => {
+    if (!open) return
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      if (event.target instanceof Node && !slicerRef.current?.contains(event.target)) setOpen(false)
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('pointerdown', closeOnOutsideClick)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutsideClick)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [open])
+
+  const toggleOption = (value: string) => {
+    const selected = selectedValues === null ? options.map((option) => option.value) : selectedValues
+    const next = selected.includes(value)
+      ? selected.filter((item) => item !== value)
+      : [...selected, value]
+    onChange(next.length === options.length ? null : next)
+  }
+
+  const selectVisible = () => {
+    const selected = new Set(selectedValues ?? options.map((option) => option.value))
+    for (const option of filteredOptions) selected.add(option.value)
+    onChange(selected.size === options.length ? null : [...selected])
+  }
+
+  const deselectVisible = () => {
+    const visible = new Set(filteredOptions.map((option) => option.value))
+    const selected = selectedValues ?? options.map((option) => option.value)
+    onChange(selected.filter((value) => !visible.has(value)))
+  }
+
+  return <div className={`filter-slicer ${compact ? 'filter-slicer-compact' : ''}`} ref={slicerRef}>
+    <button type="button" className={`filter-slicer-trigger ${selectedValues !== null ? 'filter-slicer-active' : ''}`} aria-label={`${label} filter, ${summary}`} aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+      <span>{label}</span><small>{summary}</small><ChevronDown size={14} />
+    </button>
+    {open && <div className="filter-slicer-popover" role="group" aria-label={`${label} options`}>
+      <label className="filter-slicer-search"><Search size={15} /><input autoFocus value={search} onChange={(event) => setSearch(event.target.value)} placeholder={`Search ${label.toLocaleLowerCase()}…`} aria-label={`Search ${label}`} /></label>
+      <div className="filter-slicer-actions"><button type="button" onClick={selectVisible}>Select all</button><button type="button" onClick={deselectVisible}>Deselect all</button></div>
+      <div className="filter-slicer-options">
+        {filteredOptions.map((option) => <label className="filter-slicer-option" key={option.value}>
+          <input type="checkbox" checked={slicerIncludes(selectedValues, option.value)} onChange={() => toggleOption(option.value)} />
+          <span>{option.label}</span>
+        </label>)}
+        {!filteredOptions.length && <span className="filter-slicer-empty">No matching options</span>}
+      </div>
+    </div>}
+  </div>
+}
+
 function formatDate(value: string, options?: Intl.DateTimeFormatOptions) {
   return new Intl.DateTimeFormat('en-IN', options ?? { day: 'numeric', month: 'short' }).format(
     new Date(value),
@@ -255,8 +333,7 @@ function App() {
     && (readCookie(SIDEBAR_COOKIE) ?? localStorage.getItem(SIDEBAR_COOKIE)) === 'true')
   const [query, setQuery] = useState('')
   const [debouncedQuery, setDebouncedQuery] = useState('')
-  const [statusFilter, setStatusFilter] = useState('')
-  const [taskFilter, setTaskFilter] = useState<'all' | 'today' | 'overdue' | 'completed'>('all')
+  const [taskFilters, setTaskFilters] = useState<string[] | null>(['all'])
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null)
   const [showCreateLead, setShowCreateLead] = useState(false)
   const [showNotifications, setShowNotifications] = useState(false)
@@ -454,7 +531,6 @@ function App() {
       }
       const params = new URLSearchParams({ limit: '100' })
       if (debouncedQuery) params.set('q', debouncedQuery)
-      if (statusFilter) params.set('status', statusFilter)
       const requestOptions = { signal: controller.signal }
       const usersRequest = canManageTeam
         ? api<User[]>('/users?limit=100', token, requestOptions)
@@ -493,7 +569,7 @@ function App() {
     } finally {
       if (refreshControllerRef.current === controller) refreshControllerRef.current = null
     }
-  }, [canManageTeam, canReadWorkspace, debouncedQuery, page, signOut, statusFilter, token])
+  }, [canManageTeam, canReadWorkspace, debouncedQuery, page, signOut, token])
 
   useEffect(() => {
     // eslint-disable-next-line react/set-state-in-effect -- Synchronizes server data with auth and search filters.
@@ -511,11 +587,17 @@ function App() {
   }[activePage]
 
   const visibleTasks = useMemo(() => {
-    if (taskFilter === 'completed') return completedTasks
-    if (taskFilter === 'today') return dashboard?.due_today ?? []
-    if (taskFilter === 'overdue') return dashboard?.overdue ?? []
-    return tasks
-  }, [completedTasks, dashboard, taskFilter, tasks])
+    const categories: TaskCategory[] = taskFilters === null
+      ? ['all', 'today', 'overdue', 'completed']
+      : taskFilters.filter((filter): filter is TaskCategory => ['all', 'today', 'overdue', 'completed'].includes(filter))
+    const taskGroups = [
+      ...(categories.includes('all') ? [tasks] : []),
+      ...(categories.includes('today') ? [dashboard?.due_today ?? []] : []),
+      ...(categories.includes('overdue') ? [dashboard?.overdue ?? []] : []),
+      ...(categories.includes('completed') ? [completedTasks] : []),
+    ]
+    return [...new Map(taskGroups.flat().map((task) => [task.id, task])).values()]
+  }, [completedTasks, dashboard, taskFilters, tasks])
 
   const updateLeadStatus = async (lead: Lead, status: LeadStatus) => {
     const updated = await api<Lead>(`/leads/${lead.id}`, token, {
@@ -847,12 +929,12 @@ function App() {
                 <OverviewPage dashboard={dashboard} leads={leads} events={auditEvents} users={teamUsers} currentUser={user} now={renderTime.getTime()} onOpenLead={setSelectedLead} onOpenLeadById={openLeadById} onOpenTasks={() => setPage('tasks')} onSeeAllActivity={() => setPage('activity')} onCompleteTask={requestCompleteTask} onOpenLeads={() => setPage('leads')} onOpenEvent={(event) => void openAuditEvent(event)} canWrite={canWriteWorkspace} />
               )}
               {canReadWorkspace && activePage === 'leads' && (
-                <LeadsPage leads={leads} query={query} setQuery={setQuery} searchRef={leadSearchRef} statusFilter={statusFilter} setStatusFilter={setStatusFilter} onOpenLead={setSelectedLead} onUpdateStatus={requestLeadStatusUpdate} onAddLead={() => setShowCreateLead(true)} onImportFile={importCsv} importErrors={importErrors} onDismissImportErrors={() => dispatch({ type: 'import-errors-cleared' })} canImport={canWriteWorkspace && user.role !== 'agent'} canWrite={canWriteWorkspace} loading={loading} />
+                <LeadsPage leads={leads} query={query} setQuery={setQuery} searchRef={leadSearchRef} onOpenLead={setSelectedLead} onUpdateStatus={requestLeadStatusUpdate} onAddLead={() => setShowCreateLead(true)} onImportFile={importCsv} importErrors={importErrors} onDismissImportErrors={() => dispatch({ type: 'import-errors-cleared' })} canImport={canWriteWorkspace && user.role !== 'agent'} canWrite={canWriteWorkspace} loading={loading} />
               )}
               {canReadWorkspace && activePage === 'tasks' && (
-                <TasksPage tasks={visibleTasks} filter={taskFilter} setFilter={setTaskFilter} users={teamUsers} currentUser={user} now={renderTime.getTime()} onComplete={requestCompleteTask} onOpenLead={openLeadById} canWrite={canWriteWorkspace} />
+                <TasksPage tasks={visibleTasks} filters={taskFilters} setFilters={setTaskFilters} users={teamUsers} currentUser={user} now={renderTime.getTime()} onComplete={requestCompleteTask} onOpenLead={openLeadById} canWrite={canWriteWorkspace} />
               )}
-              {canReadWorkspace && activePage === 'activity' && <ActivityPage events={auditEvents} unreadCount={unreadCount} onMarkRead={requestMarkRead} onOpenEvent={(event) => void openAuditEvent(event)} />}
+              {canReadWorkspace && activePage === 'activity' && <ActivityPage events={auditEvents} users={teamUsers} assignedTasks={[...tasks, ...completedTasks]} unreadCount={unreadCount} onMarkRead={requestMarkRead} onOpenEvent={(event) => void openAuditEvent(event)} />}
               {activePage === 'team' && canManageTeam && <TeamPage currentUser={user} users={teamUsers} temporaryPassword={temporaryPassword} onClearTemporaryPassword={() => setTemporaryPassword(null)} onCreate={createTeamUser} onUpdate={updateTeamUser} onResetPassword={resetTeamUserPassword} onError={setError} onConfirmAction={setConfirmation} onResetAll={resetAllUserPasswords} />}
               {activePage === 'org-chart' && <OrgChartPage members={orgChartMembers} loading={loading} error={error} onRetry={() => void refresh()} />}
               {activePage === 'profile' && <ProfilePage user={user} onChangePassword={changeOwnPassword} onSaveProfile={updateOwnProfile} onConfirmAction={setConfirmation} />}
@@ -869,7 +951,7 @@ function App() {
         </footer>
       </main>
 
-      {showNotifications && canReadWorkspace && <NotificationPanel events={auditEvents.slice(0, 5)} unreadCount={unreadCount} onClose={() => setShowNotifications(false)} onOpenEvent={(event) => void openAuditEvent(event)} onOpenActivity={() => { setPage('activity'); setShowNotifications(false) }} />}
+      {showNotifications && canReadWorkspace && <NotificationPanel events={auditEvents.slice(0, 5)} users={teamUsers} unreadCount={unreadCount} onClose={() => setShowNotifications(false)} onOpenEvent={(event) => void openAuditEvent(event)} onOpenActivity={() => { setPage('activity'); setShowNotifications(false) }} />}
       {confirmation && <ConfirmationDialog request={confirmation} onCancel={() => setConfirmation(null)} onConfirmed={() => setConfirmation(null)} />}
       {selectedLead && user && canReadWorkspace && <LeadDrawer lead={selectedLead} token={token} currentUser={user} onClose={() => setSelectedLead(null)} onUpdated={(updated) => { setSelectedLead(updated); void refresh() }} onError={setError} onConfirmAction={setConfirmation} canWrite={canWriteWorkspace} />}
       {showCreateLead && canWriteWorkspace && <CreateLeadModal token={token} currentUser={user} onClose={() => setShowCreateLead(false)} onConfirmAction={setConfirmation} onCreated={async (lead) => { setShowCreateLead(false); setNotice(`Added ${lead.full_name} to your leads.`); setPage('leads'); await refresh(); setSelectedLead(lead) }} onError={setError} />}
@@ -1260,7 +1342,7 @@ function OverviewPage({ dashboard, leads, events, users, currentUser, now, onOpe
 
       <section className="panel activity-panel">
         <div className="panel-header"><div><p className="eyebrow">Workspace updates</p><h2>Recent activity</h2></div><button className="icon-button subtle-icon" aria-label="See all activity" onClick={onSeeAllActivity}><ArrowUpRight size={17} /></button></div>
-        {events.length ? <ActivityList events={events.slice(0, 5)} onOpenEvent={onOpenEvent} /> : <EmptyState title="A fresh start" description="Team updates will appear here as work happens." />}
+        {events.length ? <ActivityList events={events.slice(0, 5)} users={users} onOpenEvent={onOpenEvent} /> : <EmptyState title="A fresh start" description="Team updates will appear here as work happens." />}
         <button className="panel-link" onClick={onSeeAllActivity}>View activity feed <ArrowUpRight size={14} /></button>
       </section>
     </div>
@@ -1291,10 +1373,10 @@ function SortableHeader({ label, sortKey, activeSort, direction, onSort, filter 
   </th>
 }
 
-function LeadsPage({ leads, query, setQuery, searchRef, statusFilter, setStatusFilter, onOpenLead, onUpdateStatus, onAddLead, onImportFile, importErrors, onDismissImportErrors, canImport, canWrite, loading }: {
-  leads: Lead[]; query: string; setQuery: (value: string) => void; statusFilter: string
+function LeadsPage({ leads, query, setQuery, searchRef, onOpenLead, onUpdateStatus, onAddLead, onImportFile, importErrors, onDismissImportErrors, canImport, canWrite, loading }: {
+  leads: Lead[]; query: string; setQuery: (value: string) => void
   searchRef: React.RefObject<HTMLInputElement | null>
-  setStatusFilter: (value: string) => void; onOpenLead: (lead: Lead) => void
+  onOpenLead: (lead: Lead) => void
   onUpdateStatus: (lead: Lead, status: LeadStatus) => void; onAddLead: () => void
   onImportFile: (file: File) => Promise<void>
   importErrors: CSVImportResult['errors']
@@ -1308,27 +1390,33 @@ function LeadsPage({ leads, query, setQuery, searchRef, statusFilter, setStatusF
   const [importActionError, setImportActionError] = useState('')
   const importInputRef = useRef<HTMLInputElement>(null)
   const importValidationRef = useRef(0)
-  const [sourceFilter, setSourceFilter] = useState<LeadSource | ''>('')
-  const [locationFilter, setLocationFilter] = useState('')
-  const [bedroomFilter, setBedroomFilter] = useState('')
+  const [sourceFilter, setSourceFilter] = useState<string[] | null>(null)
+  const [locationFilter, setLocationFilter] = useState<string[] | null>(null)
+  const [bedroomFilter, setBedroomFilter] = useState<string[] | null>(null)
+  const [stageFilter, setStageFilter] = useState<string[] | null>(null)
   const [sortKey, setSortKey] = useState<LeadSortKey>('added')
   const [sortDirection, setSortDirection] = useState<SortDirection>('descending')
   const locationOptions = useMemo(() => [...new Set(leads
     .map((lead) => lead.preferred_location?.trim())
-    .filter((location): location is string => Boolean(location)))].sort((a, b) => a.localeCompare(b)), [leads])
+    .filter((location): location is string => Boolean(location)))].sort((a, b) => a.localeCompare(b))
+    .map((location) => ({ value: location, label: location }))
+    .concat(leads.some((lead) => !lead.preferred_location?.trim()) ? [{ value: '__unset__', label: 'Not set' }] : []), [leads])
   const bedroomOptions = useMemo(() => [...new Set(leads
     .map((lead) => lead.bhk)
     .filter((bedrooms): bedrooms is number => bedrooms !== null && bedrooms !== undefined))]
-    .sort((a, b) => a - b), [leads])
+    .sort((a, b) => a - b)
+    .map((bedrooms) => ({ value: String(bedrooms), label: `${bedrooms} BHK` }))
+    .concat(leads.some((lead) => lead.bhk === null || lead.bhk === undefined) ? [{ value: '__unset__', label: 'Not specified' }] : []), [leads])
   const visibleLeads = useMemo(() => leads
-    .filter((lead) => (!sourceFilter || lead.source === sourceFilter)
-      && (!locationFilter || lead.preferred_location?.trim() === locationFilter)
-      && (!bedroomFilter || String(lead.bhk ?? '') === bedroomFilter))
+    .filter((lead) => slicerIncludes(sourceFilter, lead.source)
+      && slicerIncludes(locationFilter, lead.preferred_location?.trim() || '__unset__')
+      && slicerIncludes(bedroomFilter, lead.bhk === null || lead.bhk === undefined ? '__unset__' : String(lead.bhk))
+      && slicerIncludes(stageFilter, lead.status))
     .sort((left, right) => {
       const compared = compareLeads(left, right, sortKey)
       return sortDirection === 'ascending' ? compared : -compared
-    }), [bedroomFilter, leads, locationFilter, sortDirection, sortKey, sourceFilter])
-  const hasActiveFilters = Boolean(query || statusFilter || sourceFilter || locationFilter || bedroomFilter)
+    }), [bedroomFilter, leads, locationFilter, sortDirection, sortKey, sourceFilter, stageFilter])
+  const hasActiveFilters = Boolean(query || sourceFilter !== null || locationFilter !== null || bedroomFilter !== null || stageFilter !== null)
 
   const changeSort = (nextSortKey: LeadSortKey) => {
     if (nextSortKey === sortKey) {
@@ -1341,10 +1429,10 @@ function LeadsPage({ leads, query, setQuery, searchRef, statusFilter, setStatusF
 
   const clearFilters = () => {
     setQuery('')
-    setStatusFilter('')
-    setSourceFilter('')
-    setLocationFilter('')
-    setBedroomFilter('')
+    setStageFilter(null)
+    setSourceFilter(null)
+    setLocationFilter(null)
+    setBedroomFilter(null)
   }
 
   const closeImportDialog = () => {
@@ -1385,15 +1473,20 @@ function LeadsPage({ leads, query, setQuery, searchRef, statusFilter, setStatusF
   }
 
   return <section className="panel full-panel leads-page-panel">
-    <div className="list-toolbar"><div className="search-box"><Search size={17} /><input ref={searchRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search leads, locations…" aria-label="Search leads" /><kbd className="search-shortcut">/</kbd>{query && <button className="icon-button clear-search" aria-label="Clear search" onClick={() => setQuery('')}><X size={14} /></button>}</div><span className="result-count">Showing {visibleLeads.length} of {leads.length}</span>{hasActiveFilters && <button className="text-button clear-filters" onClick={clearFilters}>Clear filters</button>}{canImport && <button type="button" className="button button-secondary import-button" onClick={() => setShowImportDialog(true)}><Upload size={15} /> Import CSV / Excel</button>}</div>
+    <div className="list-toolbar lead-list-toolbar"><div className="search-box"><Search size={17} /><input ref={searchRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search leads, locations…" aria-label="Search leads" /><kbd className="search-shortcut">/</kbd>{query && <button className="icon-button clear-search" aria-label="Clear search" onClick={() => setQuery('')}><X size={14} /></button>}</div>
+      <FilterSlicer label="Location" options={locationOptions} selectedValues={locationFilter} onChange={setLocationFilter} />
+      <FilterSlicer label="Bedrooms" options={bedroomOptions} selectedValues={bedroomFilter} onChange={setBedroomFilter} />
+      <FilterSlicer label="Source" options={Object.entries(sourceLabels).map(([value, label]) => ({ value, label }))} selectedValues={sourceFilter} onChange={setSourceFilter} />
+      <FilterSlicer label="Stage" options={stages.map((stage) => ({ value: stage.value, label: stage.label }))} selectedValues={stageFilter} onChange={setStageFilter} />
+      <span className="result-count">Showing {visibleLeads.length} of {leads.length}</span>{hasActiveFilters && <button className="text-button clear-filters" onClick={clearFilters}>Clear filters</button>}{canImport && <button type="button" className="button button-secondary import-button" onClick={() => setShowImportDialog(true)}><Upload size={15} /> Import CSV / Excel</button>}</div>
     {showImportDialog && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !submittingImport) closeImportDialog() }}><section className="create-modal import-dialog" role="dialog" aria-modal="true" aria-labelledby="import-dialog-title"><div className="modal-header"><div><span className="eyebrow">LEAD WORKSPACE</span><h2 id="import-dialog-title">Import a spreadsheet</h2></div><button className="icon-button" type="button" aria-label="Close import dialog" onClick={closeImportDialog} disabled={submittingImport}><X size={19} /></button></div><p className="import-guidance">Use a UTF-8 <code>.csv</code> or Excel <code>.xlsx</code> file. The first worksheet row must contain these headers; extra or unknown columns are rejected.</p><div className="import-schema"><strong>Required</strong><code>full_name</code><strong>Optional</strong><span>{LEAD_IMPORT_COLUMNS.slice(1).join(', ')}</span></div><p className="import-guidance">Each remaining row is one lead. Use whole numbers for budgets (INR) and <code>bhk</code>. <code>source</code> values: website, 99acres, magicbricks, instagram, whatsapp, walk_in, manual, csv_import, other. <code>status</code> values: new, contacted, site_visit, negotiation, won, lost. Max 500 rows and 2 MiB. The browser checks the structure and the API validates it again before saving.</p><pre className="import-example"><code>full_name,email,phone,preferred_location,budget_min_inr,budget_max_inr,bhk{"\n"}Aarav Mehta,aarav@example.com,+919876543210,Baner,5000000,8000000,2</code></pre><input ref={importInputRef} className="import-file-input" type="file" accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ''; if (file) void inspectSelectedFile(file) }} /><div className="import-file-row"><button type="button" className="button button-secondary" onClick={() => importInputRef.current?.click()} disabled={validatingImport || submittingImport}>{importFile ? 'Choose another file' : 'Choose CSV or Excel file'}</button>{importFile && <span className="import-file-name">{importFile.name}</span>}</div><div className="import-validation" aria-live="polite">{validatingImport && <p>Checking file structure…</p>}{importCheck?.valid && <p className="import-valid">{importCheck.rowCount} lead rows are ready to import.</p>}{importCheck && !importCheck.valid && <ul role="alert">{importCheck.errors.map((error) => <li key={error}>{error}</li>)}</ul>}{importActionError && <p className="confirmation-error" role="alert">{importActionError}</p>}</div><div className="confirmation-actions"><button type="button" className="button button-secondary" onClick={closeImportDialog} disabled={submittingImport}>Cancel</button><button type="button" className="button button-primary" onClick={() => void submitImport()} disabled={!importCheck?.valid || validatingImport || submittingImport}>{submittingImport ? 'Importing…' : 'Import leads'}</button></div></section></div>}
     {importErrors.length > 0 && <div className="csv-errors"><div><strong>Some rows weren’t imported</strong><span>Review the row numbers and fix the source CSV before retrying.</span></div><button className="icon-button" aria-label="Dismiss import errors" onClick={onDismissImportErrors}><X size={16} /></button><ul>{importErrors.slice(0, 8).map((item) => <li key={`${item.row}-${item.message}`}><strong>Row {item.row}</strong>{item.message}</li>)}</ul>{importErrors.length > 8 && <small>And {importErrors.length - 8} more row errors.</small>}</div>}
     <div className="table-scroll"><table className="data-table leads-table"><thead><tr>
-      <SortableHeader label="Lead" sortKey="name" activeSort={sortKey} direction={sortDirection} onSort={changeSort} filter={<select className="table-header-filter" aria-label="Filter by location" value={locationFilter} onChange={(event) => setLocationFilter(event.target.value)}><option value="">All locations</option>{locationOptions.map((location) => <option key={location} value={location}>{location}</option>)}</select>} />
+      <SortableHeader label="Lead" sortKey="name" activeSort={sortKey} direction={sortDirection} onSort={changeSort} />
       <SortableHeader label="Contact" sortKey="contact" activeSort={sortKey} direction={sortDirection} onSort={changeSort} />
-      <SortableHeader label="Requirement" sortKey="requirement" activeSort={sortKey} direction={sortDirection} onSort={changeSort} filter={<select className="table-header-filter" aria-label="Filter by bedrooms" value={bedroomFilter} onChange={(event) => setBedroomFilter(event.target.value)}><option value="">All sizes</option>{bedroomOptions.map((bedrooms) => <option key={bedrooms} value={bedrooms}>{bedrooms} BHK</option>)}</select>} />
-      <SortableHeader label="Source" sortKey="source" activeSort={sortKey} direction={sortDirection} onSort={changeSort} filter={<select className="table-header-filter" aria-label="Filter by source" value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value as LeadSource | '')}><option value="">All sources</option>{Object.entries(sourceLabels).map(([source, label]) => <option key={source} value={source}>{label}</option>)}</select>} />
-      <SortableHeader label="Stage" sortKey="stage" activeSort={sortKey} direction={sortDirection} onSort={changeSort} filter={<select className="table-header-filter" aria-label="Filter by stage" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="">All stages</option>{stages.map((stage) => <option key={stage.value} value={stage.value}>{stage.label}</option>)}</select>} />
+      <SortableHeader label="Requirement" sortKey="requirement" activeSort={sortKey} direction={sortDirection} onSort={changeSort} />
+      <SortableHeader label="Source" sortKey="source" activeSort={sortKey} direction={sortDirection} onSort={changeSort} />
+      <SortableHeader label="Stage" sortKey="stage" activeSort={sortKey} direction={sortDirection} onSort={changeSort} />
       <SortableHeader label="Added" sortKey="added" activeSort={sortKey} direction={sortDirection} onSort={changeSort} />
       <th aria-label="Open" />
     </tr></thead><tbody>{visibleLeads.map((lead) => <tr key={lead.id}><td><button className="lead-cell lead-cell-button" onClick={() => onOpenLead(lead)}><div className={`avatar avatar-${avatarColor(lead.full_name)}`}>{initials(lead.full_name)}</div><span><strong>{lead.full_name}</strong><small>{lead.preferred_location || 'Location not set'}</small></span></button></td><td><span>{lead.email || '—'}</span><small className="table-subline">{lead.phone || 'No phone'}</small></td><td><strong className="requirement-main">{lead.bhk ? `${lead.bhk} BHK` : 'Home search'}</strong><small className="table-subline">{budgetRange(lead)}</small></td><td><span className="source-label">{sourceLabels[lead.source]}</span></td><td><select className={`status-select status-${stageFor(lead.status).tone}`} aria-label={`Change ${lead.full_name} stage`} value={lead.status} disabled={!canWrite} onChange={(event) => void onUpdateStatus(lead, event.target.value as LeadStatus)}>{stages.map((stage) => <option key={stage.value} value={stage.value}>{stage.label}</option>)}</select></td><td className="muted-cell">{formatDate(lead.created_at)}</td><td><button className="icon-button row-open" aria-label={`Open ${lead.full_name}`} onClick={() => onOpenLead(lead)}><ChevronRight size={17} /></button></td></tr>)}</tbody></table></div>
@@ -1403,17 +1496,44 @@ function LeadsPage({ leads, query, setQuery, searchRef, statusFilter, setStatusF
   </section>
 }
 
-function TasksPage({ tasks, filter, setFilter, users, currentUser, now, onComplete, onOpenLead, canWrite }: {
-  tasks: (Task | Dashboard['due_today'][number])[]; filter: 'all' | 'today' | 'overdue' | 'completed'
+function TasksPage({ tasks, filters, setFilters, users, currentUser, now, onComplete, onOpenLead, canWrite }: {
+  tasks: (Task | Dashboard['due_today'][number])[]; filters: string[] | null
   users: User[]; currentUser: User
-  setFilter: (filter: 'all' | 'today' | 'overdue' | 'completed') => void; now: number
+  setFilters: (filters: string[] | null) => void; now: number
   onComplete: (task: Pick<Task, 'id' | 'title'>) => void; onOpenLead: (leadId: string) => void
   canWrite: boolean
 }) {
-  const filters = [{ id: 'all', label: 'All open' }, { id: 'today', label: 'Due today' }, { id: 'overdue', label: 'Overdue' }, { id: 'completed', label: 'Completed' }] as const
+  const [query, setQuery] = useState('')
+  const [assigneeFilter, setAssigneeFilter] = useState<string[] | null>(null)
+  const categories: SlicerOption[] = [{ value: 'all', label: 'All open' }, { value: 'today', label: 'Due today' }, { value: 'overdue', label: 'Overdue' }, { value: 'completed', label: 'Completed' }]
+  const selectedCategory = filters?.length === 1 ? filters[0] : null
+  const filteredTasks = tasks.filter((task) => {
+    const assigneeName = taskAssigneeName(task, users, currentUser)
+    const searchable = `${task.title} ${'description' in task ? task.description ?? '' : ''} ${'lead_name' in task ? task.lead_name : ''} ${assigneeName}`
+    const normalizedQuery = query.trim().toLocaleLowerCase()
+    return (!normalizedQuery || searchable.toLocaleLowerCase().includes(normalizedQuery))
+      && slicerIncludes(assigneeFilter, task.assigned_to ?? '__unassigned__')
+  })
+  const hasTaskFilters = Boolean(query || assigneeFilter !== null || filters === null || filters.length !== 1 || filters[0] !== 'all')
+  const assigneeOptions = [
+    ...users.map((member) => ({ value: member.id, label: member.full_name })),
+    ...(tasks.some((task) => !task.assigned_to) ? [{ value: '__unassigned__', label: 'Unassigned' }] : []),
+  ]
+  const emptyTitle = selectedCategory === 'completed' ? 'No completed follow-ups yet'
+    : selectedCategory === 'overdue' ? 'Nothing overdue'
+      : selectedCategory === 'today' ? 'Nothing due today'
+        : selectedCategory === 'all' ? 'No open follow-ups'
+          : 'No matching follow-ups'
   return <section className="panel full-panel task-page-panel">
-    <div className="panel-header task-header"><div><p className="eyebrow">Follow-up schedule</p><h2>{filter === 'completed' ? 'Completed follow-ups' : 'Your follow-up list'}</h2></div><div className="task-filter-pills">{filters.map((item) => <button key={item.id} className={`filter-pill ${filter === item.id ? 'filter-pill-active' : ''}`} onClick={() => setFilter(item.id)}>{item.label}</button>)}</div></div>
-    {tasks.length ? <div className="task-list">{tasks.map((task) => {
+    <div className="panel-header task-header"><div><p className="eyebrow">Follow-up schedule</p><h2>{selectedCategory === 'completed' ? 'Completed follow-ups' : 'Your follow-up list'}</h2></div></div>
+    <div className="list-toolbar section-filter-toolbar">
+      <label className="search-box"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search follow-ups, leads…" aria-label="Search follow-ups" />{query && <button type="button" className="icon-button clear-search" aria-label="Clear follow-up search" onClick={() => setQuery('')}><X size={14} /></button>}</label>
+      <FilterSlicer label="Type" options={categories} selectedValues={filters} onChange={setFilters} />
+      <FilterSlicer label="Assigned to" options={assigneeOptions} selectedValues={assigneeFilter} onChange={setAssigneeFilter} />
+      <span className="result-count">{filteredTasks.length} of {tasks.length}</span>
+      {hasTaskFilters && <button type="button" className="text-button clear-filters" onClick={() => { setQuery(''); setAssigneeFilter(null); setFilters(['all']) }}>Clear filters</button>}
+    </div>
+    {filteredTasks.length ? <div className="task-list">{filteredTasks.map((task) => {
       const completed = task.status === 'completed'
       return <div className={`task-row ${completed ? 'task-row-completed' : ''}`} key={task.id}>
         {completed ? <span className="task-completed-mark"><Check size={14} /></span> : canWrite ? <button className="task-check large-check" title="Mark complete" aria-label={`Mark ${task.title} complete`} onClick={() => onComplete(task)}><Check size={14} /></button> : <span className="task-completed-mark" aria-hidden="true" />}
@@ -1421,13 +1541,58 @@ function TasksPage({ tasks, filter, setFilter, users, currentUser, now, onComple
         <span className="task-assignee"><span className="avatar avatar-xs avatar-user">{initials(taskAssigneeName(task, users, currentUser))}</span>{taskAssigneeName(task, users, currentUser)}</span>
         <span className={`task-due ${!completed && taskIsOverdue(task.due_at, now) ? 'task-time-overdue' : ''}`}><CalendarDays size={15} />{completed && 'completed_at' in task && task.completed_at ? `Completed ${relativeDate(task.completed_at)}` : relativeDate(task.due_at)}</span>
       </div>
-    })}</div> : <EmptyState title={filter === 'overdue' ? 'Nothing overdue' : filter === 'today' ? 'Nothing due today' : filter === 'completed' ? 'No completed follow-ups yet' : 'No open follow-ups'} description={filter === 'all' ? 'Create a follow-up from any lead to keep the conversation moving.' : filter === 'completed' ? 'Finished follow-ups will stay here for reference.' : 'You’re all caught up. Keep it that way.'} />}
+    })}</div> : <EmptyState title={hasTaskFilters ? 'No matching follow-ups' : emptyTitle} description={hasTaskFilters ? 'Try another search or clear the filters.' : selectedCategory === 'all' ? 'Create a follow-up from any lead to keep the conversation moving.' : selectedCategory === 'completed' ? 'Finished follow-ups will stay here for reference.' : 'You’re all caught up. Keep it that way.'} />}
     <div className="task-footnote"><Clock3 size={14} /> Dates and due-today boundaries use your team’s configured timezone.</div>
   </section>
 }
 
-function ActivityPage({ events, unreadCount, onMarkRead, onOpenEvent }: { events: AuditEvent[]; unreadCount: number; onMarkRead: () => void; onOpenEvent: (event: AuditEvent) => void }) {
-  return <section className="panel full-panel activity-page-panel"><div className="panel-header"><div><p className="eyebrow">Shared with your team</p><h2>The activity feed</h2><p className="panel-subtitle">A clear view of the important changes happening across your workspace.</p></div>{unreadCount > 0 && <button className="button button-secondary" onClick={onMarkRead}><CheckCheck size={16} /> Mark as read</button>}</div>{events.length ? <ActivityList events={events} expanded onOpenEvent={onOpenEvent} /> : <EmptyState title="Nothing to report yet" description="Team changes and lead updates will show up here." />}<div className="activity-feed-note"><span className="secure-dot" /> This feed follows your team role and lead access.</div></section>
+function ActivityPage({ events, users, assignedTasks, unreadCount, onMarkRead, onOpenEvent }: { events: AuditEvent[]; users: User[]; assignedTasks: Pick<Task, 'id' | 'assigned_to'>[]; unreadCount: number; onMarkRead: () => void; onOpenEvent: (event: AuditEvent) => void }) {
+  const [query, setQuery] = useState('')
+  const [typeFilter, setTypeFilter] = useState<string[] | null>(null)
+  const [actorFilter, setActorFilter] = useState<string[] | null>(null)
+  const [assigneeFilter, setAssigneeFilter] = useState<string[] | null>(null)
+  const taskAssignees = new Map(assignedTasks.map((task) => [task.id, task.assigned_to]))
+  const types = [...new Set(events.map((event) => event.entity_type))]
+    .map((type) => ({ value: type, label: type.replaceAll('_', ' ') }))
+  const assigneeOptions = [
+    ...users.map((member) => ({ value: member.id, label: member.full_name })),
+    ...(assignedTasks.some((task) => !task.assigned_to) ? [{ value: '__unassigned__', label: 'Unassigned' }] : []),
+  ]
+  const filteredEvents = events.filter((event) => {
+    const assignedTo = event.changes?.assigned_to
+    const eventTaskAssignee = event.entity_type === 'task' && event.entity_id ? taskAssignees.get(event.entity_id) : undefined
+    const hasTaskAssignee = event.entity_type === 'task' && Boolean(event.entity_id) && taskAssignees.has(event.entity_id!)
+    const changedAssignees = typeof assignedTo === 'object' && assignedTo !== null && 'from' in assignedTo && 'to' in assignedTo
+      ? [assignedTo.from, assignedTo.to]
+      : assignedTo !== undefined ? [assignedTo] : []
+    const eventAssignees = [
+      ...(hasTaskAssignee ? [eventTaskAssignee ?? '__unassigned__'] : []),
+      ...changedAssignees.map((id) => typeof id === 'string' ? id : '__unassigned__'),
+    ]
+    const changesText = Object.entries(event.changes ?? {}).map(([key, value]) => `${auditFieldLabel(key)} ${JSON.stringify(value)}`).join(' ')
+    const searchable = `${event.summary} ${event.actor_name ?? ''} ${changesText}`
+    const normalizedQuery = query.trim().toLocaleLowerCase()
+    return (!normalizedQuery || searchable.toLocaleLowerCase().includes(normalizedQuery))
+      && slicerIncludes(typeFilter, event.entity_type)
+      && slicerIncludes(actorFilter, event.actor_id ?? '__unknown__')
+      && (assigneeFilter === null || eventAssignees.some((id) => assigneeFilter.includes(id)))
+  })
+  const hasActivityFilters = Boolean(query || typeFilter !== null || actorFilter !== null || assigneeFilter !== null)
+  const actorOptions = [
+    ...users.map((member) => ({ value: member.id, label: member.full_name })),
+    ...(events.some((event) => !event.actor_id) ? [{ value: '__unknown__', label: 'Unknown user' }] : []),
+  ]
+  return <section className="panel full-panel activity-page-panel"><div className="panel-header"><div><p className="eyebrow">Shared with your team</p><h2>The activity feed</h2><p className="panel-subtitle">A clear view of the important changes happening across your workspace.</p></div>{unreadCount > 0 && <button className="button button-secondary" onClick={onMarkRead}><CheckCheck size={16} /> Mark as read</button>}</div>
+    <div className="list-toolbar section-filter-toolbar">
+      <label className="search-box"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search activity…" aria-label="Search activity" />{query && <button type="button" className="icon-button clear-search" aria-label="Clear activity search" onClick={() => setQuery('')}><X size={14} /></button>}</label>
+      <FilterSlicer label="Type" options={types} selectedValues={typeFilter} onChange={setTypeFilter} />
+      <FilterSlicer label="Changed by" options={actorOptions} selectedValues={actorFilter} onChange={setActorFilter} />
+      <FilterSlicer label="Assigned to" options={assigneeOptions} selectedValues={assigneeFilter} onChange={setAssigneeFilter} />
+      <span className="result-count">{filteredEvents.length} of {events.length}</span>
+      {hasActivityFilters && <button type="button" className="text-button clear-filters" onClick={() => { setQuery(''); setTypeFilter(null); setActorFilter(null); setAssigneeFilter(null) }}>Clear filters</button>}
+    </div>
+    {filteredEvents.length ? <ActivityList events={filteredEvents} users={users} expanded onOpenEvent={onOpenEvent} /> : <EmptyState title={hasActivityFilters ? 'No matching activity' : 'Nothing to report yet'} description={hasActivityFilters ? 'Try another search or clear the filters.' : 'Team changes and lead updates will show up here.'} />}
+    <div className="activity-feed-note"><span className="secure-dot" /> This feed follows your team role and lead access.</div></section>
 }
 
 const auditFieldLabels: Record<string, string> = {
@@ -1440,6 +1605,7 @@ const auditFieldLabels: Record<string, string> = {
   due_at: 'Due date',
   full_name: 'Name',
   is_active: 'Account status',
+  manager_id: 'Manager',
   role: 'Role',
   source: 'Source',
   status: 'Stage',
@@ -1452,8 +1618,17 @@ function auditFieldLabel(key: string) {
   return auditFieldLabels[key] ?? key.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())
 }
 
-function auditValue(key: string, value: unknown) {
+function auditValue(key: string, value: unknown, users: User[]) {
   if (value == null) return 'None'
+  if (key === 'due_at') {
+    if (typeof value !== 'string' || Number.isNaN(new Date(value).getTime())) return 'Date updated'
+    return formatDate(value, { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' })
+  }
+  if (key === 'manager_id') {
+    return typeof value === 'string'
+      ? users.find((user) => user.id === value)?.full_name ?? 'Manager updated'
+      : 'Manager updated'
+  }
   if (key === 'budget_min_inr' || key === 'budget_max_inr') {
     return typeof value === 'number' ? formatCurrency(value) : 'Budget updated'
   }
@@ -1467,7 +1642,7 @@ function auditValue(key: string, value: unknown) {
   return String(value).replaceAll('_', ' ')
 }
 
-function formatAuditChange(key: string, value: unknown, entityType: string) {
+function formatAuditChange(key: string, value: unknown, entityType: string, users: User[]) {
   if (key === 'changed_fields' && Array.isArray(value)) {
     const fields = value.filter((field): field is string => typeof field === 'string')
     return fields.length ? `Updated: ${fields.map(auditFieldLabel).join(', ')}` : 'Details updated'
@@ -1476,25 +1651,25 @@ function formatAuditChange(key: string, value: unknown, entityType: string) {
   if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
     if ('from' in value && 'to' in value) {
       if (key === 'assigned_to') return 'Assignee changed'
-      return `${label}: ${auditValue(key, value.from)} → ${auditValue(key, value.to)}`
+      return `${label}: ${auditValue(key, value.from, users)} → ${auditValue(key, value.to, users)}`
     }
     return `${label} updated`
   }
   if (Array.isArray(value)) return `${label}: ${value.map((item) => String(item).replaceAll('_', ' ')).join(', ')}`
-  return `${label}: ${auditValue(key, value)}`
+  return `${label}: ${auditValue(key, value, users)}`
 }
 
-function ActivityList({ events, expanded = false, onOpenEvent }: { events: AuditEvent[]; expanded?: boolean; onOpenEvent?: (event: AuditEvent) => void }) {
+function ActivityList({ events, users, expanded = false, onOpenEvent }: { events: AuditEvent[]; users: User[]; expanded?: boolean; onOpenEvent?: (event: AuditEvent) => void }) {
   return <div className={`activity-list ${expanded ? 'activity-list-expanded' : ''}`}>{events.map((event, index) => {
     const actionLabel = event.lead_id ? 'Open lead' : event.entity_type === 'task' ? 'Open follow-up' : event.entity_type === 'user' ? 'Open team' : 'View activity'
     const changes = Object.entries(event.changes ?? {})
     const taskTitleEntry = event.entity_type === 'task' ? changes.find(([key]) => key === 'task_title') : undefined
     const visibleChanges = taskTitleEntry ? changes.filter(([key]) => key !== 'task_title') : changes
-    const detailText = visibleChanges.map(([key, value]) => formatAuditChange(key, value, event.entity_type)).join(' · ')
+    const detailText = visibleChanges.map(([key, value]) => formatAuditChange(key, value, event.entity_type, users)).join(' · ')
     const content = <>
       <span className={`activity-avatar activity-${index % 4}`}>{event.actor_name ? initials(event.actor_name) : <UserRound size={14} />}</span>
       <span className="activity-body">
-        <span className="activity-summary"><strong>{event.actor_name || 'UrbanNest team'}</strong> {event.summary.replace(/^[A-Z]/, (letter) => letter.toLowerCase())}</span>
+        <span className="activity-summary"><strong>{event.summary}</strong> <span>by</span> <strong>{event.actor_name || 'UrbanNest team'}</strong></span>
         {taskTitleEntry ? (
           <span className="activity-detail activity-task-detail" aria-label="What changed">
             <strong className="activity-task-title">{String(taskTitleEntry[1])}</strong>
@@ -1512,8 +1687,8 @@ function ActivityList({ events, expanded = false, onOpenEvent }: { events: Audit
   })}</div>
 }
 
-function NotificationPanel({ events, unreadCount, onClose, onOpenEvent, onOpenActivity }: { events: AuditEvent[]; unreadCount: number; onClose: () => void; onOpenEvent: (event: AuditEvent) => void; onOpenActivity: () => void }) {
-  return <><button className="popover-backdrop" aria-label="Close notifications" onClick={onClose} /><section className="notification-panel"><div className="notification-panel-head"><div><strong>Notifications</strong><span>{unreadCount ? `${unreadCount} unread updates` : 'You’re all caught up'}</span></div><button className="icon-button" aria-label="Close notifications" onClick={onClose}><X size={17} /></button></div>{events.length ? <ActivityList events={events.slice(0, 4)} onOpenEvent={onOpenEvent} /> : <EmptyState title="No new updates" description="Your team feed is quiet for now." />}<button className="panel-link" onClick={onOpenActivity}>Open activity feed <ArrowUpRight size={14} /></button></section></>
+function NotificationPanel({ events, users, unreadCount, onClose, onOpenEvent, onOpenActivity }: { events: AuditEvent[]; users: User[]; unreadCount: number; onClose: () => void; onOpenEvent: (event: AuditEvent) => void; onOpenActivity: () => void }) {
+  return <><button className="popover-backdrop" aria-label="Close notifications" onClick={onClose} /><section className="notification-panel"><div className="notification-panel-head"><div><strong>Notifications</strong><span>{unreadCount ? `${unreadCount} unread updates` : 'You’re all caught up'}</span></div><button className="icon-button" aria-label="Close notifications" onClick={onClose}><X size={17} /></button></div>{events.length ? <ActivityList events={events.slice(0, 4)} users={users} onOpenEvent={onOpenEvent} /> : <EmptyState title="No new updates" description="Your team feed is quiet for now." />}<button className="panel-link" onClick={onOpenActivity}>Open activity feed <ArrowUpRight size={14} /></button></section></>
 }
 
 function ProfilePage({ user, onChangePassword, onSaveProfile, onConfirmAction }: { user: User; onChangePassword: (currentPassword: string, newPassword: string) => Promise<boolean>; onSaveProfile: (changes: ProfileUpdateRequest) => Promise<boolean>; onConfirmAction: (request: ConfirmationRequest) => void }) {
@@ -1647,9 +1822,27 @@ function TeamPage({ currentUser, users, temporaryPassword, onClearTemporaryPassw
     can_manage_users: false,
   })
   const [saving, setSaving] = useState(false)
+  const [memberQuery, setMemberQuery] = useState('')
+  const [memberRoleFilter, setMemberRoleFilter] = useState<string[] | null>(null)
+  const [memberStatusFilter, setMemberStatusFilter] = useState<string[] | null>(null)
+  const [memberManagerFilter, setMemberManagerFilter] = useState<string[] | null>(null)
   const ownerAccess = currentUser.role === 'owner' || currentUser.is_superuser
   const canWriteTeam = ownerAccess || currentUser.role !== 'co_owner' || currentUser.can_write
   const canDeleteUsers = ownerAccess || currentUser.role !== 'co_owner' || currentUser.can_delete
+  const filteredUsers = users.filter((member) => {
+    const searchable = `${member.full_name} ${member.email}`.toLocaleLowerCase()
+    const normalizedQuery = memberQuery.trim().toLocaleLowerCase()
+    return (!normalizedQuery || searchable.includes(normalizedQuery))
+      && slicerIncludes(memberRoleFilter, member.role)
+      && slicerIncludes(memberStatusFilter, String(member.is_active))
+      && slicerIncludes(memberManagerFilter, member.manager_id ?? '__unassigned__')
+  })
+  const hasMemberFilters = Boolean(memberQuery || memberRoleFilter !== null || memberStatusFilter !== null || memberManagerFilter !== null)
+  const roleOptions = (['owner', 'co_owner', 'manager', 'agent'] as const).map((memberRole) => ({ value: memberRole, label: memberRole.replace('_', ' ') }))
+  const managerOptions = [
+    ...users.filter((member) => member.role === 'manager').map((manager) => ({ value: manager.id, label: manager.full_name })),
+    ...(users.some((member) => !member.manager_id) ? [{ value: '__unassigned__', label: 'No manager' }] : []),
+  ]
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -1722,10 +1915,22 @@ function TeamPage({ currentUser, users, temporaryPassword, onClearTemporaryPassw
       </fieldset>}
       <button className="button button-primary" disabled={saving}>{saving ? 'Creating…' : 'Create account'}</button>
     </form>}
+    <div className="list-toolbar section-filter-toolbar team-filter-toolbar">
+      <label className="search-box"><Search size={17} /><input value={memberQuery} onChange={(event) => setMemberQuery(event.target.value)} placeholder="Search people…" aria-label="Search team members" />{memberQuery && <button type="button" className="icon-button clear-search" aria-label="Clear team search" onClick={() => setMemberQuery('')}><X size={14} /></button>}</label>
+      <FilterSlicer label="Role" options={roleOptions} selectedValues={memberRoleFilter} onChange={setMemberRoleFilter} />
+      <FilterSlicer label="Status" options={[{ value: 'true', label: 'Active' }, { value: 'false', label: 'Inactive' }]} selectedValues={memberStatusFilter} onChange={setMemberStatusFilter} />
+      <FilterSlicer label="Manager" options={managerOptions} selectedValues={memberManagerFilter} onChange={setMemberManagerFilter} />
+      <span className="result-count">{filteredUsers.length} of {users.length}</span>
+      {hasMemberFilters && <button type="button" className="text-button clear-filters" onClick={() => { setMemberQuery(''); setMemberRoleFilter(null); setMemberStatusFilter(null); setMemberManagerFilter(null) }}>Clear filters</button>}
+    </div>
     <div className="team-member-list">
-      {users.map((member) => <article className="team-member-row" key={member.id}>
-        <div className="avatar avatar-user">{initials(member.full_name)}</div>
-        <div className="team-member-identity"><strong>{member.full_name}</strong><span>{member.email}</span></div>
+      {filteredUsers.map((member) => <article className="team-member-card" key={member.id}>
+        <div className="team-member-card-head">
+          <div className="avatar avatar-user">{initials(member.full_name)}</div>
+          <div className="team-member-identity"><strong>{member.full_name}</strong><span>{member.email}</span></div>
+          <span className={`member-status ${member.is_active ? 'member-status-active' : ''}`}>{member.is_active ? 'Active' : 'Inactive'}</span>
+        </div>
+        <div className="team-member-card-controls">
         {ownerAccess && member.id !== currentUser.id && member.role !== 'owner'
           ? <label className="member-role-control"><span>Role</span><select aria-label={`Role for ${member.full_name}`} value={member.role} onChange={(event) => {
             const nextRole = event.target.value as UserRole
@@ -1737,7 +1942,7 @@ function TeamPage({ currentUser, users, temporaryPassword, onClearTemporaryPassw
               onConfirm: () => onUpdate(member.id, { role: nextRole }),
             })
           }}><option value="manager">Manager</option><option value="co_owner">Co-owner</option><option value="agent">Agent</option></select></label>
-          : <span className="role-pill">{member.role}</span>}
+          : <span className="role-pill">{member.role.replace('_', ' ')}</span>}
         {ownerAccess && member.role === 'agent' && <label className="member-role-control"><span>Reports to</span><select aria-label={`Manager for ${member.full_name}`} value={member.manager_id ?? ''} onChange={(event) => {
           const nextManagerId = event.target.value || null
           if (nextManagerId === member.manager_id) return
@@ -1767,7 +1972,7 @@ function TeamPage({ currentUser, users, temporaryPassword, onClearTemporaryPassw
             {label}
           </label>)}
         </div>}
-        <span className={`member-status ${member.is_active ? 'member-status-active' : ''}`}>{member.is_active ? 'Active' : 'Inactive'}</span>
+        </div>
         {member.id !== currentUser.id && canWriteTeam && <div className="member-actions">
           <button className="button button-secondary" disabled={member.is_active && !canDeleteUsers} onClick={() => member.is_active
             ? onConfirmAction({
@@ -1790,7 +1995,7 @@ function TeamPage({ currentUser, users, temporaryPassword, onClearTemporaryPassw
           })}><RotateCcw size={15} /><span>Reset password</span></button>
         </div>}
       </article>)}
-      {!users.length && <EmptyState title="No team members found" description="New accounts will appear here after they are created." />}
+      {!filteredUsers.length && <EmptyState title={hasMemberFilters ? 'No matching people' : 'No team members found'} description={hasMemberFilters ? 'Try another search or clear the filters.' : 'New accounts will appear here after they are created.'} />}
     </div>
     <p className="team-access-note">Access controls are enforced by the API. Managers and user-enabled co-owners manage agents; only owners can create managers or co-owners.</p>
   </section>
@@ -2102,16 +2307,16 @@ function LeadDrawer({ lead: initialLead, token, currentUser, onClose, onUpdated,
     })
   }
 
-  return <><button className="drawer-backdrop" aria-label="Close lead details" onClick={onClose} /><aside className="lead-drawer"><div className="drawer-topbar"><span className="eyebrow">Lead profile</span><button className="icon-button" aria-label="Close lead details" onClick={onClose}><X size={19} /></button></div><div className="drawer-lead-head"><div className={`avatar avatar-large avatar-${avatarColor(lead.full_name)}`}>{initials(lead.full_name)}</div><div><h2>{lead.full_name}</h2><span className="drawer-subtitle">Added {formatDate(lead.created_at, { day: 'numeric', month: 'long', year: 'numeric' })}</span></div></div>
+  return <><button className="drawer-backdrop" aria-label="Close lead details" onClick={onClose} /><aside className="lead-drawer"><div className="drawer-topbar"><span className="eyebrow">Lead profile</span><button className="icon-button" aria-label="Close lead details" onClick={onClose}><X size={19} /></button></div><div className="lead-drawer-columns"><div className="lead-drawer-main"><div className="drawer-lead-head"><div className={`avatar avatar-large avatar-${avatarColor(lead.full_name)}`}>{initials(lead.full_name)}</div><div><h2>{lead.full_name}</h2><span className="drawer-subtitle">Added {formatDate(lead.created_at, { day: 'numeric', month: 'long', year: 'numeric' })}</span></div></div>
     <div className="drawer-stage"><label htmlFor="drawer-status">Current stage</label><select id="drawer-status" className={`status-select status-${stageFor(lead.status).tone}`} value={lead.status} disabled={!canWrite} onChange={(event) => void changeStage(event.target.value as LeadStatus)}>{stages.map((stage) => <option key={stage.value} value={stage.value}>{stage.label}</option>)}</select></div>
-    {canChangeAssignment && <div className="drawer-stage"><label htmlFor="drawer-assignee">Assigned to</label><select id="drawer-assignee" value={lead.assigned_to ?? ''} disabled={!canWrite} onChange={(event) => changeAssignee(event.target.value)}>{!lead.assigned_to && <option value="" disabled>Unassigned</option>}{lead.assigned_to === currentUser.id && !assignees.some((item) => item.id === currentUser.id) && <option value={currentUser.id}>{currentUser.full_name} · default</option>}{assignees.map((assignee) => <option key={assignee.id} value={assignee.id}>{assignee.full_name} · {assignee.role.replace('_', ' ')}</option>)}</select></div>}
+    {canChangeAssignment && <div className="drawer-stage"><label htmlFor="drawer-assignee">Assigned to</label><select id="drawer-assignee" className="assignee-select" value={lead.assigned_to ?? ''} disabled={!canWrite} onChange={(event) => changeAssignee(event.target.value)}>{!lead.assigned_to && <option value="" disabled>Unassigned</option>}{lead.assigned_to === currentUser.id && !assignees.some((item) => item.id === currentUser.id) && <option value={currentUser.id}>{currentUser.full_name} · default</option>}{assignees.map((assignee) => <option key={assignee.id} value={assignee.id}>{assignee.full_name} · {assignee.role.replace('_', ' ')}</option>)}</select></div>}
     {canWrite && <div className="drawer-actions"><button className="button button-secondary" onClick={() => setActiveForm(activeForm === 'activity' ? null : 'activity')}><ActivityIcon size={15} /> Log activity</button><button className="button button-secondary" onClick={() => setActiveForm(activeForm === 'task' ? null : 'task')}><CalendarDays size={15} /> Add follow-up</button></div>}
     {canWrite && activeForm === 'activity' && <form className="drawer-form" onSubmit={(event) => void submitActivity(event)}><div className="drawer-form-heading"><strong>Log an interaction</strong><button type="button" className="icon-button" aria-label="Close form" onClick={() => setActiveForm(null)}><X size={15} /></button></div><select value={activityType} onChange={(event) => setActivityType(event.target.value as Activity['type'])}><option value="call">Call</option><option value="note">Note</option><option value="site_visit">Site visit</option><option value="email">Email</option><option value="whatsapp">WhatsApp</option></select><textarea value={activityText} onChange={(event) => setActivityText(event.target.value)} placeholder="What happened? Add a useful note…" rows={3} required /><button className="button button-primary" disabled={saving}>{saving ? 'Saving…' : 'Save activity'}</button></form>}
     {canWrite && activeForm === 'task' && <form className="drawer-form" onSubmit={(event) => void submitTask(event)}><div className="drawer-form-heading"><strong>Plan a follow-up</strong><button type="button" className="icon-button" aria-label="Close form" onClick={() => setActiveForm(null)}><X size={15} /></button></div><input value={taskTitle} onChange={(event) => setTaskTitle(event.target.value)} placeholder="e.g. Call to confirm site visit" maxLength={200} required /><input type="datetime-local" value={taskDate} onChange={(event) => setTaskDate(event.target.value)} required /><button className="button button-primary" disabled={saving}>{saving ? 'Saving…' : 'Create follow-up'}</button></form>}
     <div className="detail-section"><p className="eyebrow">Property preferences</p><div className="detail-cards"><div className="detail-card"><span>Budget</span><strong>{budgetRange(lead)}</strong></div><div className="detail-card"><span>Configuration</span><strong>{lead.bhk ? `${lead.bhk} BHK` : 'Not specified'}</strong></div></div><div className="detail-location"><MapPin size={16} /><span>{lead.preferred_location || 'Preferred location not specified'}</span></div></div>
     <div className="detail-section contact-section"><p className="eyebrow">Contact details</p>{lead.email && <a href={`mailto:${lead.email}`}><span className="contact-icon">@</span>{lead.email}<ArrowUpRight size={13} /></a>}{lead.phone && <a href={`tel:${lead.phone}`}><span className="contact-icon">#</span>{lead.phone}<ArrowUpRight size={13} /></a>}{!lead.email && !lead.phone && <span className="empty-contact">No contact details added</span>}<div className="contact-source">Source <strong>{sourceLabels[lead.source]}</strong></div></div>
     <AICopilotPreview lead={lead} />
-    <div className="detail-section timeline-section"><div className="timeline-head"><div><p className="eyebrow">Lead history</p><h3>Timeline</h3></div><span className="timeline-count">{activities.length}</span></div>{activities.length ? <div className="timeline-list">{activities.map((activity) => <div className="timeline-item" key={activity.id}><span className="timeline-dot" /><div><strong>{activity.type.replaceAll('_', ' ')}</strong><p>{activity.body}</p><time>{relativeDate(activity.occurred_at)}</time></div></div>)}</div> : <p className="timeline-empty">No activity yet. Log a call or note to start the story.</p>}</div>
+    </div><div className="lead-drawer-timeline"><div className="detail-section timeline-section"><div className="timeline-head"><div><p className="eyebrow">Lead history</p><h3>Timeline</h3></div><span className="timeline-count">{activities.length}</span></div>{activities.length ? <div className="timeline-list">{activities.map((activity) => <div className="timeline-item" key={activity.id}><span className="timeline-dot" /><div><strong>{activity.type.replaceAll('_', ' ')}</strong><p>{activity.body}</p><time>{relativeDate(activity.occurred_at)}</time></div></div>)}</div> : <p className="timeline-empty">No activity yet. Log a call or note to start the story.</p>}</div></div></div>
   </aside></>
 }
 
@@ -2330,7 +2535,7 @@ function CreateLeadModal({ token, currentUser, onClose, onCreated, onError, onCo
           <label>Pipeline stage<select value={form.status} onChange={(event) => update('status', event.target.value as LeadStatus)}>{stages.map((stage) => <option key={stage.value} value={stage.value}>{stage.label}</option>)}</select></label>
           {(currentUser.is_superuser || ['owner', 'co_owner', 'manager'].includes(currentUser.role)) && (
             <label>Assign to
-              <select value={assignedTo} onChange={(event) => setAssignedTo(event.target.value)}>
+              <select className="assignee-select" value={assignedTo} onChange={(event) => setAssignedTo(event.target.value)}>
                 {currentUser.role === 'manager' && <option value="">Me (default)</option>}
                 {assignees.map((assignee) => <option key={assignee.id} value={assignee.id}>{assignee.full_name} · {assignee.role.replace('_', ' ')}</option>)}
               </select>

@@ -39,7 +39,7 @@ from app.db.models import (
     UserRole,
 )
 from app.db.session import get_db
-from app.main import app
+from app.main import api_app, app
 from app.modules.ai.schemas import (
     LeadScoreResult,
     MessageDraftResult,
@@ -162,7 +162,7 @@ class APIAuthAndAuthorizationTests(unittest.TestCase):
             with self.session_factory() as session:
                 yield session
 
-        app.dependency_overrides[get_db] = override_get_db
+        api_app.dependency_overrides[get_db] = override_get_db
         self.client = TestClient(app)
         self.password = "Test-password-123!"
 
@@ -208,7 +208,7 @@ class APIAuthAndAuthorizationTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.client.close()
-        app.dependency_overrides.clear()
+        api_app.dependency_overrides.clear()
         self.engine.dispose()
         self.environment.stop()
 
@@ -600,6 +600,55 @@ class APIAuthAndAuthorizationTests(unittest.TestCase):
             json={"status": "contacted"},
         )
         self.assertEqual(denied_write.status_code, 403)
+
+    def test_owner_can_promote_agent_to_co_owner_with_cors(self) -> None:
+        origin = "http://localhost:5173"
+        preflight = self.client.options(
+            f"/api/v1/users/{self.agent_id}",
+            headers={
+                "Origin": origin,
+                "Access-Control-Request-Method": "PATCH",
+                "Access-Control-Request-Headers": "authorization,content-type",
+            },
+        )
+        self.assertEqual(preflight.status_code, 200, preflight.text)
+        self.assertEqual(preflight.headers.get("access-control-allow-origin"), origin)
+
+        response = self.client.patch(
+            f"/api/v1/users/{self.agent_id}",
+            headers={**self.headers("owner@example.test"), "Origin": origin},
+            json={"role": "co_owner"},
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.headers.get("access-control-allow-origin"), origin)
+        promoted_user = response.json()
+        self.assertEqual(promoted_user["role"], "co_owner")
+        self.assertIsNone(promoted_user["manager_id"])
+        self.assertTrue(promoted_user["can_read"])
+        self.assertTrue(promoted_user["can_write"])
+        self.assertFalse(promoted_user["can_delete"])
+        self.assertFalse(promoted_user["can_manage_users"])
+
+    def test_cors_headers_are_preserved_on_unhandled_errors(self) -> None:
+        origin = "http://localhost:5173"
+
+        def unexpected_error():
+            raise RuntimeError("test server failure")
+
+        api_app.add_api_route("/test-unhandled-error", unexpected_error, methods=["GET"])
+        try:
+            with TestClient(app, raise_server_exceptions=False) as client:
+                response = client.get(
+                    "/test-unhandled-error",
+                    headers={"Origin": origin},
+                )
+            self.assertEqual(response.status_code, 500)
+            self.assertEqual(response.headers.get("access-control-allow-origin"), origin)
+        finally:
+            api_app.router.routes[:] = [
+                route for route in api_app.router.routes
+                if getattr(route, "path", None) != "/test-unhandled-error"
+            ]
 
     def test_co_owner_needs_delete_access_to_deactivate_team_agents(self) -> None:
         created = self.client.post(

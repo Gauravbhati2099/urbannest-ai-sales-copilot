@@ -13,7 +13,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, status
 from openpyxl import load_workbook
 from openpyxl.utils.exceptions import InvalidFileException
 from pydantic import ValidationError
-from sqlalchemy import or_, select, update
+from sqlalchemy import bindparam, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import (
@@ -304,7 +304,7 @@ def list_leads(
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
         statement = statement.where(Lead.assigned_to == assigned_to)
     if q is not None:
-        pattern = f"%{q.strip()}%"
+        pattern = bindparam("lead_search_pattern", value=f"%{q.strip()}%")
         statement = statement.where(
             or_(
                 Lead.full_name.ilike(pattern),
@@ -314,7 +314,10 @@ def list_leads(
             )
         )
     if location is not None:
-        statement = statement.where(Lead.preferred_location.ilike(f"%{location.strip()}%"))
+        location_pattern = bindparam(
+            "lead_location_pattern", value=f"%{location.strip()}%"
+        )
+        statement = statement.where(Lead.preferred_location.ilike(location_pattern))
     if budget_min_inr is not None:
         statement = statement.where(
             or_(

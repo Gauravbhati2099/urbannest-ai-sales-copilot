@@ -118,6 +118,7 @@ ESTATE_NAMES = (
 class DemoUser:
     legacy_email: str
     email: str
+    alternate_email: str | None
     full_name: str
     role: UserRole
     phone: str
@@ -131,10 +132,16 @@ def _demo_user(
     role: UserRole,
     phone_number: int,
     manager_local_email: str | None = None,
+    alternate_local_email: str | None = None,
 ) -> DemoUser:
     return DemoUser(
         legacy_email=legacy_email,
         email=f"{local_email}@{DEMO_EMAIL_DOMAIN}",
+        alternate_email=(
+            f"{alternate_local_email}@{DEMO_EMAIL_DOMAIN}"
+            if alternate_local_email
+            else None
+        ),
         full_name=full_name,
         role=role,
         phone=f"{MOCK_PHONE_PREFIX}{phone_number:02d}",
@@ -183,6 +190,7 @@ DEMO_USERS = (
         UserRole.AGENT,
         5,
         "rohan.desai",
+        "meera.nair.agent",
     ),
     _demo_user(
         "agent03@demo.urbannest.example.invalid",
@@ -261,6 +269,84 @@ DEMO_USERS = (
         15,
     ),
 )
+
+
+def demo_user_email_candidates(demo_user: DemoUser) -> tuple[str, ...]:
+    return tuple(
+        email
+        for email in (
+            demo_user.legacy_email,
+            demo_user.email,
+            demo_user.alternate_email,
+        )
+        if email is not None
+    )
+
+
+def _resolve_demo_user_accounts(
+    session: Session, team_id: UUID
+) -> tuple[dict[str, User | None], dict[str, str], set[UUID]]:
+    expected_emails = {
+        email
+        for demo_user in DEMO_USERS
+        for email in demo_user_email_candidates(demo_user)
+    }
+    found_users = session.scalars(
+        select(User).where(User.email.in_(expected_emails))
+    ).all()
+    users_by_email = {user.email: user for user in found_users}
+    existing_users: dict[str, User | None] = {}
+    resolved_emails: dict[str, str] = {}
+    preserved_manager_ids: set[UUID] = set()
+    found_user_ids: set[UUID] = set()
+
+    for demo_user in DEMO_USERS:
+        matches = [
+            (email, user)
+            for email in demo_user_email_candidates(demo_user)
+            if (user := users_by_email.get(email)) is not None
+        ]
+        valid_matches = [
+            (email, user)
+            for email, user in matches
+            if user.team_id == team_id and user.role == demo_user.role
+        ]
+        preserved_conflicts = [
+            user
+            for email, user in matches
+            if email == demo_user.email
+            and demo_user.alternate_email is not None
+            and demo_user.role is UserRole.AGENT
+            and user.team_id == team_id
+            and user.role is UserRole.MANAGER
+        ]
+        if len(preserved_conflicts) > 1 or len(valid_matches) > 1:
+            raise RuntimeError(
+                f"Multiple accounts match demo user {demo_user.full_name!r}; "
+                "refusing ambiguous seed"
+            )
+        if len(matches) != len(valid_matches) + len(preserved_conflicts):
+            user = matches[0][1]
+            raise RuntimeError(
+                f"Existing demo user {user.email!r} has unexpected team or role; "
+                "refusing to overwrite"
+            )
+
+        user = valid_matches[0][1] if valid_matches else None
+        if user is not None:
+            if user.id in found_user_ids:
+                raise RuntimeError("Demo account email mapping is ambiguous")
+            found_user_ids.add(user.id)
+        if preserved_conflicts:
+            preserved_manager_ids.add(preserved_conflicts[0].id)
+            if demo_user.alternate_email is None:
+                raise RuntimeError("Preserved manager has no alternate agent email")
+            resolved_emails[demo_user.email] = demo_user.alternate_email
+        else:
+            resolved_emails[demo_user.email] = demo_user.email
+        existing_users[demo_user.email] = user
+
+    return existing_users, resolved_emails, preserved_manager_ids
 LEAD_NAMES = (
     "Aanya Mehta",
     "Vihaan Bhatia",
@@ -569,68 +655,49 @@ def seed_demo_data(session: Session) -> tuple[list[str], str | None]:
         session.add(team)
         session.flush()
 
-    expected_emails = {
-        email
-        for demo_user in DEMO_USERS
-        for email in (demo_user.legacy_email, demo_user.email)
-    }
-    found_users = session.scalars(
-        select(User).where(User.email.in_(expected_emails))
-    ).all()
-    users_by_existing_email = {user.email: user for user in found_users}
-    existing_users: dict[str, User | None] = {}
-    found_user_ids: set[UUID] = set()
-    for demo_user in DEMO_USERS:
-        matches = [
-            user
-            for email in (demo_user.legacy_email, demo_user.email)
-            if (user := users_by_existing_email.get(email)) is not None
-        ]
-        if len(matches) > 1:
-            raise RuntimeError(
-                f"Multiple accounts match demo user {demo_user.full_name!r}; "
-                "refusing ambiguous seed"
-            )
-        user = matches[0] if matches else None
-        if user is not None:
-            if user.id in found_user_ids:
-                raise RuntimeError("Demo account email mapping is ambiguous")
-            found_user_ids.add(user.id)
-            if user.team_id != team.id or user.role != demo_user.role:
-                raise RuntimeError(
-                    f"Existing demo user {demo_user.legacy_email!r} has unexpected "
-                    "team or role; refusing to overwrite"
-                )
-        existing_users[demo_user.email] = user
+    existing_users, resolved_emails, preserved_manager_ids = (
+        _resolve_demo_user_accounts(session, team.id)
+    )
 
     existing_count = sum(user is not None for user in existing_users.values())
-    if 0 < existing_count < len(DEMO_USERS):
+    missing_count = len(DEMO_USERS) - existing_count
+    preserved_missing_count = sum(
+        existing_users[demo_user.email] is None
+        and demo_user.alternate_email is not None
+        and resolved_emails[demo_user.email] == demo_user.alternate_email
+        for demo_user in DEMO_USERS
+    )
+    if existing_count and missing_count != preserved_missing_count:
         raise RuntimeError(
             "Partial demo user set exists; inspect users before continuing the seed"
         )
 
-    demo_password = secrets.token_urlsafe(24) if existing_count == 0 else None
+    demo_password = secrets.token_urlsafe(24) if missing_count else None
     users_by_email: dict[str, User] = {}
     new_emails: list[str] = []
     for demo_user in DEMO_USERS:
         user = existing_users[demo_user.email]
+        account_email = resolved_emails[demo_user.email]
+        full_name = demo_user.full_name
+        if account_email == demo_user.alternate_email:
+            full_name = f"{full_name} (Agent)"
         if user is None:
             if demo_password is None:
                 raise RuntimeError("Demo password was not initialized")
             user = User(
                 team_id=team.id,
-                full_name=demo_user.full_name,
-                email=demo_user.email,
+                full_name=full_name,
+                email=account_email,
                 phone=demo_user.phone,
                 password_hash=password_hash.hash(demo_password),
                 role=demo_user.role,
                 is_active=True,
             )
             session.add(user)
-            new_emails.append(demo_user.email)
+            new_emails.append(account_email)
         else:
-            user.email = demo_user.email
-            user.full_name = demo_user.full_name
+            user.email = account_email
+            user.full_name = full_name
             user.phone = demo_user.phone
         users_by_email[demo_user.email] = user
 
@@ -639,6 +706,8 @@ def seed_demo_data(session: Session) -> tuple[list[str], str | None]:
     managers = [users_by_email[DEMO_USERS[index].email] for index in (1, 2)]
     for demo_user in DEMO_USERS:
         user = users_by_email[demo_user.email]
+        if user.manager_id in preserved_manager_ids:
+            continue
         if demo_user.manager_email is None:
             user.manager_id = None
             continue
@@ -983,11 +1052,26 @@ def main() -> None:
     with SessionLocal.begin() as session:
         _, demo_password = seed_demo_data(session)
 
+    expected_emails = {
+        email
+        for demo_user in DEMO_USERS
+        for email in demo_user_email_candidates(demo_user)
+    }
+    with SessionLocal() as session:
+        team = session.scalar(select(Team).where(Team.name == TEAM_NAME))
+        if team is None:
+            raise RuntimeError("Demo team disappeared after the seed transaction")
+        seeded_accounts = session.scalars(
+            select(User)
+            .where(User.team_id == team.id, User.email.in_(expected_emails))
+            .order_by(User.full_name, User.email)
+        ).all()
+
     print("Synthetic demo account emails:")
-    for demo_user in DEMO_USERS:
-        print(f"{demo_user.full_name} ({demo_user.role.value}): {demo_user.email}")
+    for user in seeded_accounts:
+        print(f"{user.full_name} ({user.role.value}): {user.email}")
     if demo_password:
-        print(f"Shared demo password: {demo_password}")
+        print(f"Generated temporary password for new demo accounts: {demo_password}")
     else:
         print("Existing account passwords were not changed.")
     print("Synthetic profile, lead, activity, task, and estate data are ready.")

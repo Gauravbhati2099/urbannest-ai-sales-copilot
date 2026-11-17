@@ -287,6 +287,61 @@ class DemoSeedTests(unittest.TestCase):
             )
         )
 
+    def test_seed_preserves_manager_collision_and_creates_alternate_agent(self) -> None:
+        seed_demo_data(self.session)
+        manager_email = "meera.nair@demo.urbannest.example.invalid"
+        alternate_agent_email = "meera.nair.agent@demo.urbannest.example.invalid"
+        report_email = "aditi.shah@demo.urbannest.example.invalid"
+        manager = self.session.scalar(select(User).where(User.email == manager_email))
+        report = self.session.scalar(select(User).where(User.email == report_email))
+        assert manager is not None
+        assert report is not None
+        manager_id = manager.id
+        manager_password_hash = manager.password_hash
+        manager.role = UserRole.MANAGER
+        report.manager_id = manager.id
+        self.session.flush()
+
+        new_emails, demo_password = seed_demo_data(self.session)
+        self.session.commit()
+
+        self.assertEqual(new_emails, [alternate_agent_email])
+        self.assertIsNotNone(demo_password)
+        preserved_manager = self.session.scalar(
+            select(User).where(User.email == manager_email)
+        )
+        self.assertIsNotNone(preserved_manager)
+        assert preserved_manager is not None
+        self.assertEqual(preserved_manager.id, manager_id)
+        self.assertEqual(preserved_manager.role, UserRole.MANAGER)
+        self.assertEqual(preserved_manager.password_hash, manager_password_hash)
+        preserved_report = self.session.scalar(
+            select(User).where(User.email == report_email)
+        )
+        self.assertIsNotNone(preserved_report)
+        assert preserved_report is not None
+        self.assertEqual(preserved_report.manager_id, manager_id)
+
+        alternate_agent = self.session.scalar(
+            select(User).where(User.email == alternate_agent_email)
+        )
+        self.assertIsNotNone(alternate_agent)
+        assert alternate_agent is not None
+        self.assertEqual(alternate_agent.role, UserRole.AGENT)
+        self.assertEqual(alternate_agent.full_name, "Meera Nair (Agent)")
+        rohan = self.session.scalar(
+            select(User).where(User.email == "rohan.desai@demo.urbannest.example.invalid")
+        )
+        self.assertIsNotNone(rohan)
+        assert rohan is not None
+        self.assertEqual(alternate_agent.manager_id, rohan.id)
+
+        repeated_emails, repeated_password = seed_demo_data(self.session)
+        self.session.commit()
+        self.assertEqual(repeated_emails, [])
+        self.assertIsNone(repeated_password)
+        self.assertEqual(self.session.scalar(select(func.count()).select_from(User)), 16)
+
 
 if __name__ == "__main__":
     unittest.main()

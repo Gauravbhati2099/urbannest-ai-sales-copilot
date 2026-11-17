@@ -34,7 +34,9 @@ permissions.
    ```
 
    The seed is safe to rerun and updates the existing demo estate titles. On
-   its first run it prints a generated shared demo password; keep it private.
+   its first run, it prints a temporary password for newly created accounts;
+   keep it private. If a demo address is already assigned a different role,
+   the seeder preserves that account and may create a separate demo login.
    Startup does not seed demo data automatically.
 5. Open `http://127.0.0.1:8000/docs` for the API.
 

@@ -10,7 +10,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from app.db.base import Base
-from app.db.models import Team, User
+from app.db.models import Team, User, UserRole
 from scripts.rotate_demo_password import (
     DemoCredential,
     _stage_credentials_csv,
@@ -100,6 +100,44 @@ class DemoPasswordRotationTests(unittest.TestCase):
                     user.password_hash,
                 )
             )
+
+    def test_rotation_skips_preserved_manager_and_rotates_alternate_agent(self) -> None:
+        manager_email = "meera.nair@demo.urbannest.example.invalid"
+        report_email = "aditi.shah@demo.urbannest.example.invalid"
+        manager = self.session.scalar(select(User).where(User.email == manager_email))
+        report = self.session.scalar(select(User).where(User.email == report_email))
+        assert manager is not None
+        assert report is not None
+        manager_password_hash = manager.password_hash
+        manager.role = UserRole.MANAGER
+        report.manager_id = manager.id
+        self.session.flush()
+
+        seed_demo_data(self.session)
+        self.session.commit()
+        manager_id = manager.id
+
+        credentials = rotate_demo_password(self.session)
+        self.session.commit()
+
+        self.assertEqual(len(credentials), len(DEMO_USERS))
+        credential_emails = {credential.login_id for credential in credentials}
+        self.assertIn("meera.nair.agent@demo.urbannest.example.invalid", credential_emails)
+        self.assertNotIn(manager_email, credential_emails)
+        preserved_manager = self.session.scalar(
+            select(User).where(User.email == manager_email)
+        )
+        self.assertIsNotNone(preserved_manager)
+        assert preserved_manager is not None
+        self.assertEqual(preserved_manager.id, manager_id)
+        self.assertEqual(preserved_manager.role, UserRole.MANAGER)
+        self.assertEqual(preserved_manager.password_hash, manager_password_hash)
+        preserved_report = self.session.scalar(
+            select(User).where(User.email == report_email)
+        )
+        self.assertIsNotNone(preserved_report)
+        assert preserved_report is not None
+        self.assertEqual(preserved_report.manager_id, manager_id)
 
     def test_staged_csv_contains_user_id_login_role_and_password(self) -> None:
         user = self.session.scalars(select(User)).first()

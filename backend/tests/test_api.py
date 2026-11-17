@@ -2092,6 +2092,30 @@ class APIAuthAndAuthorizationTests(unittest.TestCase):
         self.assertEqual(listing_response.status_code, 200, listing_response.text)
         self.assertEqual([item["id"] for item in listing_response.json()], [estate["id"]])
 
+        injection_query = "%' OR 1=1 --"
+        estate_injection_response = self.client.get(
+            "/api/v1/estates",
+            params={"q": injection_query},
+            headers={"Authorization": f"Bearer {owner_token}"},
+        )
+        self.assertEqual(
+            estate_injection_response.status_code,
+            200,
+            estate_injection_response.text,
+        )
+        self.assertEqual(estate_injection_response.json(), [])
+        lead_injection_response = self.client.get(
+            "/api/v1/leads",
+            params={"q": injection_query},
+            headers={"Authorization": f"Bearer {owner_token}"},
+        )
+        self.assertEqual(
+            lead_injection_response.status_code,
+            200,
+            lead_injection_response.text,
+        )
+        self.assertEqual(lead_injection_response.json(), [])
+
         link_response = self.client.post(
             f"/api/v1/estates/{estate['id']}/interests",
             headers={"Authorization": f"Bearer {owner_token}"},

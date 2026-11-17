@@ -13,7 +13,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.models import Team, User
-from scripts.seed_demo import DEMO_USERS, TEAM_NAME
+from scripts.seed_demo import (
+    DEMO_USERS,
+    TEAM_NAME,
+    _resolve_demo_user_accounts,
+)
 
 CREDENTIALS_CSV = Path(__file__).resolve().parents[1] / "demo_credentials.csv"
 
@@ -27,41 +31,22 @@ class DemoCredential:
 
 
 def rotate_demo_password(session: Session) -> list[DemoCredential]:
-    expected_users = {
-        email: demo_user
-        for demo_user in DEMO_USERS
-        for email in (demo_user.legacy_email, demo_user.email)
-    }
-    users = session.scalars(
-        select(User).where(User.email.in_(expected_users))
-    ).all()
-    users_by_email = {user.email: user for user in users}
-    demo_accounts: dict[str, User] = {}
-    seen_user_ids = set()
-    for demo_user in DEMO_USERS:
-        matches = [
-            user
-            for email in (demo_user.legacy_email, demo_user.email)
-            if (user := users_by_email.get(email)) is not None
-        ]
-        if len(matches) != 1 or matches[0].id in seen_user_ids:
-            raise RuntimeError(
-                "The complete, unambiguous seeded demo account set was not found; "
-                "no passwords changed"
-            )
-        user = matches[0]
-        if user.role != demo_user.role:
-            raise RuntimeError(
-                f"Demo account {user.email!r} has an unexpected role; "
-                "no passwords changed"
-            )
-        demo_accounts[demo_user.email] = user
-        seen_user_ids.add(user.id)
-
-    if len(users) != len(DEMO_USERS):
+    teams = session.scalars(select(Team).where(Team.name == TEAM_NAME)).all()
+    if len(teams) != 1:
         raise RuntimeError(
             "The complete seeded demo account set was not found; no passwords changed"
         )
+    existing_accounts, _, _ = _resolve_demo_user_accounts(session, teams[0].id)
+    if any(existing_accounts[demo_user.email] is None for demo_user in DEMO_USERS):
+        raise RuntimeError(
+            "The complete, unambiguous seeded demo account set was not found; "
+            "no passwords changed"
+        )
+    demo_accounts = {
+        email: user
+        for email, user in existing_accounts.items()
+        if user is not None
+    }
 
     team_ids = {user.team_id for user in demo_accounts.values()}
     if len(team_ids) != 1:

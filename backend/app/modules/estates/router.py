@@ -5,7 +5,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import bindparam, select
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import CurrentUser, DatabaseSession
@@ -132,7 +132,7 @@ def list_estates(
     if status_filter is not None:
         statement = statement.where(Estate.status == status_filter)
     if q is not None:
-        pattern = f"%{q.strip()}%"
+        pattern = bindparam("estate_search_pattern", value=f"%{q.strip()}%")
         statement = statement.where(
             Estate.title.ilike(pattern)
             | Estate.location["display_name"].as_string().ilike(pattern)

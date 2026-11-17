@@ -5,10 +5,11 @@ import io
 import os
 import unittest
 from datetime import datetime, timedelta, timezone
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
+import jwt
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from openpyxl import Workbook
@@ -17,6 +18,7 @@ from sqlalchemy import create_engine, event, func, make_url, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.core.security import TOKEN_AUDIENCE, TOKEN_ISSUER
 from app.db.base import Base
 from app.db.models import (
     AIUsage,
@@ -24,6 +26,8 @@ from app.db.models import (
     Activity,
     AuditEvent,
     AuditVisibility,
+    ChatConversation,
+    ChatMessage,
     Lead,
     LeadScore,
     LeadSource,
@@ -39,7 +43,8 @@ from app.db.models import (
     UserRole,
 )
 from app.db.session import get_db
-from app.main import api_app, app
+with patch.dict(os.environ, {"CHAT_ENABLED": "true"}):
+    from app.main import api_app, app, create_app
 from app.modules.ai.schemas import (
     LeadScoreResult,
     MessageDraftResult,
@@ -48,6 +53,7 @@ from app.modules.ai.schemas import (
 from app.modules.ai.service import AIResult, AIServiceError
 from app.modules.audit.router import _connect_limited_stream
 from app.modules.auth.router import password_hash
+from app.modules.chatbot.schemas import ChatResponse, ChatToolExecution, ChatTurnResult
 
 
 class APIAuthAndAuthorizationTests(unittest.TestCase):
@@ -165,6 +171,25 @@ class APIAuthAndAuthorizationTests(unittest.TestCase):
         api_app.dependency_overrides[get_db] = override_get_db
         self.client = TestClient(app)
         self.password = "Test-password-123!"
+
+    def test_chat_api_routes_are_disabled_by_default(self) -> None:
+        with patch.dict(os.environ, {"CHAT_ENABLED": "false"}):
+            disabled_app = create_app()
+        with patch.dict(os.environ, {"CHAT_ENABLED": "true"}):
+            enabled_app = create_app()
+
+        chat_routes = [
+            path
+            for path in disabled_app.openapi()["paths"]
+            if path.startswith("/api/v1/chat")
+        ]
+        enabled_chat_routes = [
+            path
+            for path in enabled_app.openapi()["paths"]
+            if path.startswith("/api/v1/chat")
+        ]
+        self.assertEqual(chat_routes, [])
+        self.assertIn("/api/v1/chat/messages", enabled_chat_routes)
 
     @staticmethod
     def make_user(
@@ -388,6 +413,39 @@ class APIAuthAndAuthorizationTests(unittest.TestCase):
             headers={"Authorization": "Bearer not-a-signed-token"},
         )
         self.assertEqual(response.status_code, 401)
+
+    def test_access_tokens_require_the_api_audience(self) -> None:
+        token = self.login("agent@example.test")
+        claims = jwt.decode(
+            token,
+            os.environ["JWT_SECRET_KEY"],
+            algorithms=["HS256"],
+            audience=TOKEN_AUDIENCE,
+            issuer=TOKEN_ISSUER,
+        )
+        self.assertEqual(claims["aud"], TOKEN_AUDIENCE)
+        accepted = self.client.get(
+            "/api/v1/auth/me",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        self.assertEqual(accepted.status_code, 200)
+
+        base_claims = {**claims}
+        base_claims.pop("aud")
+        invalid_claims = [
+            ("missing", base_claims),
+            ("wrong", {**base_claims, "aud": "another-service"}),
+        ]
+        for audience_case, claims in invalid_claims:
+            invalid_token = jwt.encode(
+                claims, os.environ["JWT_SECRET_KEY"], algorithm="HS256"
+            )
+            with self.subTest(audience=audience_case):
+                rejected = self.client.get(
+                    "/api/v1/auth/me",
+                    headers={"Authorization": f"Bearer {invalid_token}"},
+                )
+                self.assertEqual(rejected.status_code, 401)
 
     def test_user_creation_rejects_public_lead_team_id_as_bearer_token(self) -> None:
         response = self.client.post(
@@ -984,6 +1042,192 @@ class APIAuthAndAuthorizationTests(unittest.TestCase):
         )
         self.assertEqual(co_owner_response.status_code, 200, co_owner_response.text)
         self.assertEqual(len(co_owner_response.json()), 5)
+
+    def test_chat_uses_user_token_and_requires_read_permission_for_co_owner(self) -> None:
+        with self.session_factory.begin() as session:
+            allowed_co_owner = self.make_user(
+                session,
+                self.team.id,
+                "chat.co-owner@example.test",
+                UserRole.CO_OWNER,
+                password_hash,
+            )
+            allowed_co_owner.can_read = True
+            allowed_co_owner.can_write = False
+            denied_co_owner = self.make_user(
+                session,
+                self.team.id,
+                "no-read.co-owner@example.test",
+                UserRole.CO_OWNER,
+                password_hash,
+            )
+            denied_co_owner.can_read = False
+            denied_co_owner.can_write = False
+
+        token = self.login("chat.co-owner@example.test")
+        response_body = ChatTurnResult(response="Ready.", tool_executions=[])
+        with patch(
+            "app.modules.chatbot.router.answer_chat_message",
+            new=AsyncMock(return_value=response_body),
+        ) as answer_chat:
+            response = self.client.post(
+                "/api/v1/chat/messages",
+                headers={"Authorization": f"Bearer {token}"},
+                json={"message": "Show my estates"},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        answer_chat.assert_awaited_once_with("Show my estates", token, [])
+        conversation_id = response.json()["conversation_id"]
+        deleted = self.client.delete(
+            f"/api/v1/chat/conversations/{conversation_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        self.assertEqual(deleted.status_code, 204, deleted.text)
+
+        with patch(
+            "app.modules.chatbot.router.answer_chat_message",
+            new=AsyncMock(),
+        ) as answer_chat:
+            denied = self.client.post(
+                "/api/v1/chat/messages",
+                headers=self.headers("no-read.co-owner@example.test"),
+                json={"message": "Show my estates"},
+            )
+
+        self.assertEqual(denied.status_code, 403, denied.text)
+        answer_chat.assert_not_awaited()
+
+    def test_chat_history_is_private_persistent_and_user_deletable(self) -> None:
+        token = self.login("owner@example.test")
+        result = ChatTurnResult(
+            response="Juniper Row is available.",
+            tool_executions=[
+                ChatToolExecution(name="search_estates", status="succeeded")
+            ],
+        )
+        with patch(
+            "app.modules.chatbot.router.answer_chat_message",
+            new=AsyncMock(return_value=result),
+        ):
+            sent = self.client.post(
+                "/api/v1/chat/messages",
+                headers={"Authorization": f"Bearer {token}"},
+                json={"message": "Find Juniper Row"},
+            )
+
+        self.assertEqual(sent.status_code, 200, sent.text)
+        conversation_id = sent.json()["conversation_id"]
+        conversations = self.client.get(
+            "/api/v1/chat/conversations",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        self.assertEqual(conversations.status_code, 200, conversations.text)
+        self.assertEqual(len(conversations.json()), 1)
+        self.assertEqual(conversations.json()[0]["title"], "Find Juniper Row")
+
+        history = self.client.get(
+            f"/api/v1/chat/conversations/{conversation_id}/messages",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        self.assertEqual(history.status_code, 200, history.text)
+        self.assertEqual([message["role"] for message in history.json()], ["user", "assistant"])
+        self.assertEqual(
+            history.json()[1]["tool_executions"],
+            [{"name": "search_estates", "status": "succeeded"}],
+        )
+
+        other_user_history = self.client.get(
+            f"/api/v1/chat/conversations/{conversation_id}/messages",
+            headers=self.headers("external@example.test"),
+        )
+        self.assertEqual(other_user_history.status_code, 404)
+
+        deleted = self.client.delete(
+            f"/api/v1/chat/conversations/{conversation_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        self.assertEqual(deleted.status_code, 204)
+        with self.session_factory() as session:
+            self.assertIsNone(session.get(ChatConversation, UUID(conversation_id)))
+            self.assertEqual(
+                session.query(ChatMessage)
+                .filter(ChatMessage.conversation_id == UUID(conversation_id))
+                .count(),
+                0,
+            )
+
+    def test_chat_history_purges_expired_messages_and_conversations(self) -> None:
+        old_timestamp = datetime.now(timezone.utc) - timedelta(days=31)
+        recent_timestamp = datetime.now(timezone.utc)
+        with self.session_factory.begin() as session:
+            expired = ChatConversation(
+                team_id=self.team.id,
+                user_id=self.owner_id,
+                title="Expired chat",
+                created_at=old_timestamp,
+                updated_at=old_timestamp,
+            )
+            active = ChatConversation(
+                team_id=self.team.id,
+                user_id=self.owner_id,
+                title="Active chat",
+                created_at=old_timestamp,
+                updated_at=recent_timestamp,
+            )
+            session.add_all([expired, active])
+            session.flush()
+            session.add_all(
+                [
+                    ChatMessage(
+                        conversation_id=expired.id,
+                        team_id=self.team.id,
+                        user_id=self.owner_id,
+                        sequence=0,
+                        role="user",
+                        content="Expired message",
+                        created_at=old_timestamp,
+                    ),
+                    ChatMessage(
+                        conversation_id=active.id,
+                        team_id=self.team.id,
+                        user_id=self.owner_id,
+                        sequence=0,
+                        role="user",
+                        content="Old active message",
+                        created_at=old_timestamp,
+                    ),
+                    ChatMessage(
+                        conversation_id=active.id,
+                        team_id=self.team.id,
+                        user_id=self.owner_id,
+                        sequence=1,
+                        role="assistant",
+                        content="Recent active message",
+                        created_at=recent_timestamp,
+                    ),
+                ]
+            )
+            active_id = active.id
+
+        response = self.client.get(
+            "/api/v1/chat/conversations",
+            headers=self.headers("owner@example.test"),
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual([item["title"] for item in response.json()], ["Active chat"])
+        history = self.client.get(
+            f"/api/v1/chat/conversations/{active_id}/messages",
+            headers=self.headers("owner@example.test"),
+        )
+        self.assertEqual(history.status_code, 200, history.text)
+        self.assertEqual(
+            [message["content"] for message in history.json()],
+            ["Recent active message"],
+        )
+        with self.session_factory() as session:
+            self.assertEqual(session.query(ChatConversation).count(), 1)
+            self.assertEqual(session.query(ChatMessage).count(), 1)
 
     def test_audit_feed_visibility_is_shared_but_role_and_lead_scoped(self) -> None:
         events = [

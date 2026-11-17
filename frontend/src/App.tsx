@@ -19,6 +19,7 @@ import {
   LogOut,
   MapPin,
   Menu,
+  MessageSquareText,
   Moon,
   PanelLeftClose,
   PanelLeftOpen,
@@ -59,6 +60,7 @@ import {
   type UserRole,
   type UserUpdateRequest,
 } from './api'
+import { ChatPage } from './ChatPage'
 import { LocationAutocomplete } from './LocationAutocomplete'
 import { PhoneNumberInput } from './PhoneNumberInput'
 import { normalizeEmail, normalizeName, normalizePhone, splitStoredPhone, validateEmail, validateName } from './form-normalization'
@@ -69,7 +71,7 @@ import { CookieConsentBanner, PrivacyPolicyPage, StoragePreferencesPage, type Le
 import { inspectLeadImportFile, LEAD_IMPORT_COLUMNS, type LeadImportPreflight } from './lead-import'
 import './App.css'
 
-type Page = 'overview' | 'leads' | 'estates' | 'tasks' | 'activity' | 'team' | 'org-chart' | 'profile'
+type Page = 'overview' | 'leads' | 'estates' | 'tasks' | 'activity' | 'chat' | 'team' | 'org-chart' | 'profile'
 type Theme = 'light' | 'dark'
 type LeadSortKey = 'name' | 'contact' | 'requirement' | 'source' | 'stage' | 'added'
 type SortDirection = 'ascending' | 'descending'
@@ -80,6 +82,7 @@ const STORAGE_CONSENT_KEY = 'urbannest_storage_consent'
 const THEME_COOKIE = 'urbannest_theme'
 const SIDEBAR_COOKIE = 'urbannest_sidebar_collapsed'
 const WORKSPACE_PAGE_KEY = 'urbannest_current_page'
+const CHAT_ENABLED = import.meta.env.VITE_CHAT_ENABLED === 'true'
 
 function readCookie(name: string) {
   const prefix = `${name}=`
@@ -113,6 +116,8 @@ function readWorkspacePage(): Page {
     case 'estates':
     case 'tasks':
     case 'activity':
+    case 'chat':
+      return CHAT_ENABLED ? 'chat' : 'overview'
     case 'team':
     case 'org-chart':
     case 'profile':
@@ -576,8 +581,8 @@ function App() {
 
   useEffect(() => {
     // eslint-disable-next-line react/set-state-in-effect -- Synchronizes server data with auth and search filters.
-    if (user && !user.must_change_password) void refresh()
-  }, [refresh, user])
+    if (user && !user.must_change_password && activePage !== 'chat') void refresh()
+  }, [activePage, refresh, user])
 
   const pageTitle = {
     overview: 'Overview',
@@ -585,6 +590,7 @@ function App() {
     estates: 'Estates',
     tasks: 'Follow-ups',
     activity: 'Activity',
+    chat: 'AI chat',
     team: 'Team',
     'org-chart': 'Org chart explorer',
     profile: 'My profile',
@@ -858,6 +864,7 @@ function App() {
             <NavButton label="Estates" icon={<Building2 size={18} />} active={activePage === 'estates'} onClick={() => { setPage('estates'); setMobileNavOpen(false) }}>Estates</NavButton>
             <NavButton label="Follow-ups" icon={<CalendarDays size={18} />} active={activePage === 'tasks'} onClick={() => { setPage('tasks'); setMobileNavOpen(false) }}>Follow-ups</NavButton>
             <NavButton label="Activity" icon={<ActivityIcon size={18} />} active={activePage === 'activity'} onClick={() => { setPage('activity'); setMobileNavOpen(false) }}>Activity{unreadCount > 0 && <span className="nav-count">{unreadCount > 9 ? '9+' : unreadCount}</span>}</NavButton>
+            {CHAT_ENABLED && <NavButton label="AI chat" icon={<MessageSquareText size={18} />} active={activePage === 'chat'} onClick={() => { setPage('chat'); setMobileNavOpen(false) }}>AI chat</NavButton>}
           </>}
           {canManageTeam && <NavButton label="Team" icon={<UserRound size={18} />} active={activePage === 'team'} onClick={() => { setPage('team'); setMobileNavOpen(false) }}>Team</NavButton>}
           <NavButton label="Org chart" icon={<Network size={18} />} active={activePage === 'org-chart'} onClick={() => { setPage('org-chart'); setMobileNavOpen(false) }}>Org chart</NavButton>
@@ -913,15 +920,17 @@ function App() {
             <div>
               <p className="eyebrow">{formatDate(renderTime.toISOString(), { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
               <h1>{activePage === 'overview' ? 'Sales overview' : pageTitle}</h1>
-              <p className="heading-subtitle">{activePage === 'overview' ? 'A clear view of your leads and next steps' : activePage === 'leads' ? 'Track each enquiry from first contact to decision' : activePage === 'estates' ? 'Manage property inventory and the leads moving through each estate' : activePage === 'tasks' ? 'Keep client conversations moving with timely follow-ups' : activePage === 'activity' ? 'Changes across leads, follow-ups, and your team' : activePage === 'team' ? 'Manage team access and account setup' : activePage === 'org-chart' ? 'Explore your active team and reporting lines' : 'Your account details and sign-in security'}</p>
+              <p className="heading-subtitle">{activePage === 'overview' ? 'A clear view of your leads and next steps' : activePage === 'leads' ? 'Track each enquiry from first contact to decision' : activePage === 'estates' ? 'Manage property inventory and the leads moving through each estate' : activePage === 'tasks' ? 'Keep client conversations moving with timely follow-ups' : activePage === 'activity' ? 'Changes across leads, follow-ups, and your team' : activePage === 'chat' ? 'Ask questions about the CRM data you are authorized to access' : activePage === 'team' ? 'Manage team access and account setup' : activePage === 'org-chart' ? 'Explore your active team and reporting lines' : 'Your account details and sign-in security'}</p>
             </div>
             <div className="heading-actions">
-              <button className="button button-secondary refresh-button" onClick={() => void refresh()} disabled={loading}><RefreshCw size={16} className={loading ? 'spinning' : ''} /><span>Refresh</span></button>
+              {activePage !== 'chat' && <button className="button button-secondary refresh-button" onClick={() => void refresh()} disabled={loading}><RefreshCw size={16} className={loading ? 'spinning' : ''} /><span>Refresh</span></button>}
               {canReadWorkspace && canWriteWorkspace && (activePage === 'overview' || activePage === 'leads') && <button className="button button-primary" onClick={() => setShowCreateLead(true)}><Plus size={17} /> Add lead</button>}
             </div>
           </div>
 
-          {!workspace.hasLoaded
+          {activePage === 'chat'
+            ? <ChatPage token={token} onUnauthorized={signOut} />
+            : !workspace.hasLoaded
             ? loading || !error
               ? <LoadingState />
               : <AppFailureScreen kind="server" onRetry={() => void refresh()} />

@@ -13,6 +13,7 @@ from app.modules.leads.router import public_router, router as leads_router
 from app.modules.tasks.router import router as tasks_router
 from app.modules.dashboard.router import router as dashboard_router
 from app.modules.estates.router import router as estates_router
+from app.modules.chatbot.router import router as chatbot_router
 
 
 def create_app() -> FastAPI:
@@ -33,6 +34,11 @@ def create_app() -> FastAPI:
     app.include_router(tasks_router, prefix=api_prefix)
     app.include_router(dashboard_router, prefix=api_prefix)
     app.include_router(estates_router, prefix=api_prefix)
+    ai_services_enabled = os.getenv(
+        "AI_SERVICES_ENABLED", os.getenv("CHAT_ENABLED", "false")
+    ).strip().lower() in {"1", "true", "yes"}
+    if ai_services_enabled:
+        app.include_router(chatbot_router, prefix=api_prefix)
     app.include_router(public_router, prefix=api_prefix)
 
     @app.get("/health", tags=["health"])
@@ -54,7 +60,7 @@ app = (
         api_app,
         allow_origins=cors_origins,
         allow_credentials=True,
-        allow_methods=["GET", "POST", "PATCH"],
+        allow_methods=["GET", "POST", "PATCH", "DELETE"],
         allow_headers=["Authorization", "Content-Type"],
     )
     if cors_origins

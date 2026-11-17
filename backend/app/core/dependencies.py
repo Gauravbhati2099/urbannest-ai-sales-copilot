@@ -79,9 +79,19 @@ def get_current_user(
             return user
         if path.endswith("/users") and request.method == "GET" and user.can_manage_users:
             return user
+        is_read_only_chat = (
+            request.method == "POST" and path.endswith("/chat/messages")
+        )
+        is_own_chat_history_delete = (
+            request.method == "DELETE"
+            and "/chat/conversations/" in path
+            and user.can_read
+        )
         permitted = (
             user.can_read
             if request.method in {"GET", "HEAD"}
+            or is_read_only_chat
+            or is_own_chat_history_delete
             else user.can_delete
             if request.method == "DELETE"
             else user.can_write

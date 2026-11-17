@@ -29,7 +29,7 @@ sequenceDiagram
 
     loop Authenticated API request
         UI->>API: Request with Authorization: Bearer token
-        API->>API: Verify JWT signature, issuer, expiry, user ID and version
+        API->>API: Verify JWT signature, issuer, API audience, expiry, user ID and version
         API->>DB: Reload active user and current role/team
         API->>API: Enforce team, role and co-owner permissions
         API-->>UI: Authorized response or 401/403/404
@@ -90,7 +90,7 @@ validation.
 | Data | Handling |
 |---|---|
 | Passwords | Sent in request bodies (use HTTPS in production); stored in PostgreSQL only as Argon2 hashes. Temporary passwords are generated server-side and returned only for the creation/reset operation. Existing passwords cannot be retrieved. |
-| Access tokens | Signed JWTs include the user ID, authentication version, issuer, and expiry. The frontend keeps the current token in tab-scoped `sessionStorage`, sends it in the bearer header, and removes it on sign-out. The token is not used as a source of role/team permissions. |
+| Access tokens | Signed JWTs include the user ID, authentication version, issuer, API audience (`urbannest-api`), and expiry. Tokens without the required audience must be replaced by logging in again. The frontend keeps the current token in tab-scoped `sessionStorage`, sends it in the bearer header, and removes it on sign-out. The token is not used as a source of role/team permissions. |
 | User profile | PostgreSQL holds the account's team, name, email, optional phone, role, active state, password hash, superuser flag, four co-owner permission flags, and auth-version/password-change flags. API user responses omit the password hash and other authentication secrets. |
 | Authorization | The backend derives the acting user, team, role, and current permission flags from the verified token and database row. Queries remain team-scoped; agent records are further scoped to assignment. Co-owner read/write/delete permissions apply to authenticated CRM routes, while `can_manage_users` separately grants management of agent accounts. |
 | Login limits | Shared fixed-window counters are stored in PostgreSQL. Email/IP keys are HMACed with the JWT secret before storage; raw email addresses and IP addresses are not written to the counter table. |

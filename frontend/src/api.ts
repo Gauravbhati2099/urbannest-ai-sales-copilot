@@ -36,6 +36,32 @@ export interface LoginResponse {
   user: User
 }
 
+export interface ChatToolExecution {
+  name: string
+  status: 'succeeded' | 'failed'
+}
+
+export interface ChatConversation {
+  id: string
+  title: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ChatMessage {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  created_at: string
+  tool_executions: ChatToolExecution[]
+}
+
+export interface ChatSendResponse {
+  response: string
+  tool_executions: ChatToolExecution[]
+  conversation_id: string
+}
+
 export interface Lead {
   id: string
   team_id: string

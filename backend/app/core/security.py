@@ -10,6 +10,7 @@ import jwt
 from app.db.models import User
 
 TOKEN_ISSUER = "infinaut-crm-api"
+TOKEN_AUDIENCE = "urbannest-api"
 TOKEN_ALGORITHM = "HS256"
 
 
@@ -47,6 +48,7 @@ def create_access_token(user: User) -> tuple[str, int]:
         "sub": str(user.id),
         "ver": user.auth_version,
         "iss": TOKEN_ISSUER,
+        "aud": TOKEN_AUDIENCE,
         "iat": now,
         "exp": expires_at,
         "token_type": "access",
@@ -62,7 +64,10 @@ def decode_access_token(token: str) -> tuple[UUID, int]:
         settings.secret_key,
         algorithms=[TOKEN_ALGORITHM],
         issuer=TOKEN_ISSUER,
-        options={"require": ["exp", "iat", "iss", "sub", "token_type", "ver"]},
+        audience=TOKEN_AUDIENCE,
+        options={
+            "require": ["aud", "exp", "iat", "iss", "sub", "token_type", "ver"]
+        },
     )
     if payload.get("token_type") != "access":
         raise jwt.InvalidTokenError("Invalid token type")

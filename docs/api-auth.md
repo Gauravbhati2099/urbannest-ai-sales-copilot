@@ -3,6 +3,8 @@
 For a frontend-oriented account lifecycle diagram and details on token,
 password, profile, audit, and AI data handling, see
 [Authentication flow and user-data handling](./authentication-and-data.md).
+For the private chatbot MCP service's tool allowlist and per-user credential
+propagation, see [Private CRM MCP service](./chatbot-mcp.md).
 
 The FastAPI application is started from the `backend` directory with:
 
@@ -21,9 +23,12 @@ $env:PYTHONPATH = "."
 OpenAPI documentation is available at `/docs`; `/health` is a public process
 liveness check. Authenticated requests use `Authorization: Bearer <access_token>`.
 Login accepts JSON and returns an access token plus the public user profile.
-Tokens contain only the user ID and standard access-token metadata. Every
-authenticated request reloads the user from the database, so role/team claims
-from a browser are never trusted and deactivated accounts are rejected.
+Tokens contain the user ID, authentication version, issuer, API audience
+(`urbannest-api`), and standard access-token metadata. Every authenticated
+request validates the audience and reloads the user from the database, so
+role/team claims from a browser are never trusted and deactivated accounts are
+rejected. Tokens issued before the audience requirement must be replaced by
+logging in again.
 
 ## Endpoints
 

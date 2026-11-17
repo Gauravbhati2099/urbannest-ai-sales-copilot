@@ -935,3 +935,97 @@ class AIUsage(CreatedAtMixin, Base):
     ) -> str | None:
         del _key
         return value.strip().upper() if value is not None else None
+
+
+class ChatConversation(TimestampMixin, Base):
+    __tablename__ = "chat_conversations"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["user_id", "team_id"],
+            ["users.id", "users.team_id"],
+            name="fk_chat_conversations_user_team",
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint(
+            "id",
+            "team_id",
+            "user_id",
+            name="uq_chat_conversations_id_team_user",
+        ),
+        CheckConstraint(
+            "next_message_sequence >= 0",
+            name="ck_chat_conversations_next_message_sequence",
+        ),
+        Index(
+            "ix_chat_conversations_user_activity",
+            "user_id",
+            "team_id",
+            "updated_at",
+        ),
+        Index("ix_chat_conversations_updated_at", "updated_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    team_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    user_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    title: Mapped[str] = mapped_column(String(120), nullable=False)
+    next_message_sequence: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default=text("0"),
+    )
+
+
+class ChatMessage(CreatedAtMixin, Base):
+    __tablename__ = "chat_messages"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["conversation_id", "team_id", "user_id"],
+            [
+                "chat_conversations.id",
+                "chat_conversations.team_id",
+                "chat_conversations.user_id",
+            ],
+            name="fk_chat_messages_conversation_owner",
+            ondelete="CASCADE",
+        ),
+        CheckConstraint(
+            "role IN ('user', 'assistant')",
+            name="ck_chat_messages_role",
+        ),
+        CheckConstraint(
+            "length(content) BETWEEN 1 AND 8000",
+            name="ck_chat_messages_content_length",
+        ),
+        CheckConstraint("sequence >= 0", name="ck_chat_messages_sequence"),
+        UniqueConstraint(
+            "conversation_id",
+            "team_id",
+            "user_id",
+            "sequence",
+            name="uq_chat_messages_conversation_sequence",
+        ),
+        Index(
+            "ix_chat_messages_conversation_sequence",
+            "conversation_id",
+            "team_id",
+            "user_id",
+            "sequence",
+        ),
+        Index("ix_chat_messages_created_at", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    conversation_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    team_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    user_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    role: Mapped[str] = mapped_column(String(20), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    tool_executions: Mapped[list[dict[str, str]]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=list,
+        server_default=text("'[]'"),
+    )

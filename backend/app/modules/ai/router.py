@@ -34,7 +34,6 @@ from app.modules.ai.schemas import (
 from app.modules.ai.service import (
     AIResult,
     AIServiceError,
-    complete_structured,
     hash_context,
     redact_contact_details,
 )
@@ -42,6 +41,24 @@ from app.modules.leads.router import get_accessible_lead
 
 LOGGER = logging.getLogger(__name__)
 router = APIRouter(prefix="/leads", tags=["AI"])
+AI_FEATURES_ENABLED = os.getenv("AI_SERVICES_ENABLED", os.getenv("CHAT_ENABLED", "false")).strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
+
+
+def _require_ai_features() -> None:
+    if not AI_FEATURES_ENABLED:
+        raise HTTPException(status_code=404, detail="AI features are disabled")
+
+
+def _complete_structured(prompt: str, response_model: type) -> AIResult:
+    # Keep the provider behind the shared AI service so local and remote
+    # inference follow the same validation and activation rules.
+    from app.modules.ai.service import complete_structured
+
+    return complete_structured(prompt, response_model)
 
 
 def _lead_context(lead: Lead, session: DatabaseSession) -> dict[str, object]:
@@ -116,7 +133,7 @@ def _run_ai(
     feature: str,
 ) -> AIResult:
     try:
-        result = complete_structured(prompt, response_model)
+        result = _complete_structured(prompt, response_model)
     except AIServiceError as exc:
         _record_usage(
             session,
@@ -143,6 +160,7 @@ def read_latest_score(
     session: DatabaseSession,
 ) -> LeadScore | None:
     """Return the newest stored AI score for a visible lead, if one exists."""
+    _require_ai_features()
     lead = get_accessible_lead(session, current_user, lead_id)
     return session.scalar(
         select(LeadScore)
@@ -159,6 +177,7 @@ def score_lead(
     session: DatabaseSession,
 ) -> LeadScoreResult:
     """Generate and store a new AI priority score for a visible lead."""
+    _require_ai_features()
     lead = get_accessible_lead(session, current_user, lead_id)
     context = _lead_context(lead, session)
     context_digest = hash_context(context)
@@ -214,6 +233,7 @@ def draft_message(
     session: DatabaseSession,
 ) -> MessageDraftRead:
     """Generate and save a message draft for review; this endpoint never sends it."""
+    _require_ai_features()
     lead = get_accessible_lead(session, current_user, lead_id)
     context = _lead_context(lead, session)
     prompt = (
@@ -259,6 +279,7 @@ def extract_notes(
     session: DatabaseSession,
 ) -> NoteExtractionResult:
     """Extract suggested lead fields and a possible task from notes without saving them."""
+    _require_ai_features()
     lead = get_accessible_lead(session, current_user, lead_id)
     sanitized_notes = redact_contact_details(payload.notes, maximum_length=5000)
     prompt = (

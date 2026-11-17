@@ -7,7 +7,7 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from pwdlib import PasswordHash
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.db.models import (
@@ -59,6 +59,58 @@ ESTATE_LOCATIONS = (
     ("Sarjapur", "Bengaluru", "Karnataka", 12.9100, 77.6870),
     ("Gachibowli", "Hyderabad", "Telangana", 17.4401, 78.3489),
     ("Kondapur", "Hyderabad", "Telangana", 17.4604, 78.3560),
+)
+ESTATE_NAMES = (
+    "Aurelia Heights",
+    "Maple Crest Residences",
+    "Saffron Sky",
+    "Riverstone Residency",
+    "Orchid Park",
+    "Cedar Grove",
+    "The Ferns",
+    "Silver Oak Enclave",
+    "Serene Springs",
+    "Amberwood Estate",
+    "Lakeview Terraces",
+    "Willow Creek",
+    "Evergreen Court",
+    "Mango Tree Meadows",
+    "Bluebell Gardens",
+    "Crescent Bay Residences",
+    "Pinecrest Villas",
+    "Sunrise Orchard",
+    "Elmstone Avenue",
+    "Olive Grove",
+    "The Banyan Retreat",
+    "Meadowbrook Estate",
+    "Jade County",
+    "Windflower Residences",
+    "Coral Square",
+    "Ashwood Park",
+    "Golden Fields",
+    "Pristine Valley",
+    "The Courtyard",
+    "Hillcrest Enclave",
+    "Magnolia Homes",
+    "Greenleaf Residency",
+    "Palmstone Gardens",
+    "Parkside Terraces",
+    "Daffodil Meadows",
+    "The Arbors",
+    "Cypress Grove",
+    "Sunset Boulevard",
+    "Juniper Square",
+    "Misty Ridge",
+    "Lotus Lake Residences",
+    "Rosewood County",
+    "The Glasshouse",
+    "Blue Horizon Estate",
+    "Harvest Moon Farms",
+    "Wildflower Acres",
+    "Crownstone Residences",
+    "Springvale Park",
+    "Highland Orchard",
+    "Vista Verde",
 )
 
 
@@ -427,6 +479,11 @@ def _local_due_at(days_from_today: int, hour: int) -> datetime:
 
 def _estate_title(number: int, estate_type: EstateType, locality: str) -> str:
     type_name = estate_type.value.replace("_", " ").title()
+    return f"{ESTATE_NAMES[number - 1]} - {type_name} in {locality}"
+
+
+def _legacy_estate_title(number: int, estate_type: EstateType, locality: str) -> str:
+    type_name = estate_type.value.replace("_", " ").title()
     return f"Synthetic demo estate {number:03d} - {type_name} in {locality}"
 
 
@@ -782,13 +839,24 @@ def seed_demo_data(session: Session) -> tuple[list[str], str | None]:
         }[estate_status]
         locality, location = _estate_location(number)
         title = _estate_title(number, estate_type, locality)
-        description_marker = f"Synthetic demo estate {number:03d}:"
+        description_marker = f"Demo listing {number:03d}:"
+        legacy_description_marker = f"Synthetic demo estate {number:03d}:"
         description = (
-            f"{description_marker} fictional listing with sample ownership and "
-            f"condition details for {locality}. Not a real property."
+            f"{description_marker} fictional {estate_type.value.replace('_', ' ')} "
+            f"listing in {locality}. Property details and pricing are illustrative; "
+            "this is not a real property."
         )
         matches = session.scalars(
-            select(Estate).where(Estate.team_id == team.id, Estate.title == title)
+            select(Estate).where(
+                Estate.team_id == team.id,
+                or_(
+                    Estate.title.in_(
+                        (title, _legacy_estate_title(number, estate_type, locality))
+                    ),
+                    Estate.description.like(f"{description_marker}%"),
+                    Estate.description.like(f"{legacy_description_marker}%"),
+                ),
+            )
         ).all()
         if len(matches) > 1:
             raise RuntimeError(
@@ -796,8 +864,9 @@ def seed_demo_data(session: Session) -> tuple[list[str], str | None]:
                 "refusing ambiguous seed"
             )
         estate = matches[0] if matches else None
-        if estate is not None and not (estate.description or "").startswith(
-            description_marker
+        if estate is not None and not any(
+            (estate.description or "").startswith(marker)
+            for marker in (description_marker, legacy_description_marker)
         ):
             raise RuntimeError(
                 f"Estate title for demo estate {number:03d} is already in use; "

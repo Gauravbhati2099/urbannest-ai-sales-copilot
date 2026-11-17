@@ -64,7 +64,8 @@ class DemoSeedTests(unittest.TestCase):
         self.assertTrue(
             all(
                 estate.description is not None
-                and estate.description.startswith("Synthetic demo estate ")
+                and estate.description.startswith("Demo listing ")
+                and not estate.title.startswith("Synthetic demo estate ")
                 and estate.asking_price_inr is not None
                 and estate.assigned_to is not None
                 and estate.location["country_code"] == "IN"
@@ -251,6 +252,40 @@ class DemoSeedTests(unittest.TestCase):
             self.assertEqual(user.full_name, demo_user.full_name)
             self.assertEqual(user.phone, demo_user.phone)
             self.assertEqual(user.password_hash, password_hashes[demo_user.email])
+
+    def test_seed_renames_legacy_estates_without_duplicating_them(self) -> None:
+        seed_demo_data(self.session)
+        self.session.flush()
+        estate_ids = {
+            estate.id for estate in self.session.scalars(select(Estate)).all()
+        }
+        for number, estate in enumerate(
+            self.session.scalars(select(Estate)).all(), start=1
+        ):
+            type_name = estate.estate_type.value.replace("_", " ").title()
+            locality = estate.location["display_name"].split(",")[0]
+            estate.title = (
+                f"Synthetic demo estate {number:03d} - {type_name} in {locality}"
+            )
+            estate.description = (
+                f"Synthetic demo estate {number:03d}: fictional legacy listing."
+            )
+        self.session.flush()
+
+        seed_demo_data(self.session)
+        self.session.commit()
+
+        estates = self.session.scalars(select(Estate)).all()
+        self.assertEqual(len(estates), 50)
+        self.assertEqual({estate.id for estate in estates}, estate_ids)
+        self.assertTrue(
+            all(
+                not estate.title.startswith("Synthetic demo estate ")
+                and estate.description is not None
+                and estate.description.startswith("Demo listing ")
+                for estate in estates
+            )
+        )
 
 
 if __name__ == "__main__":

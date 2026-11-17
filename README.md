@@ -25,7 +25,18 @@ permissions.
    ..\.venv\Scripts\python.exe -m scripts.start
    ```
 
-4. Open `http://127.0.0.1:8000/docs` for the API.
+4. To populate the database with the fictional demo team, leads, and estate
+   inventory, run the seed script from `backend` after startup has applied
+   migrations:
+
+   ```powershell
+   ..\.venv\Scripts\python.exe -m scripts.seed_demo
+   ```
+
+   The seed is safe to rerun and updates the existing demo estate titles. On
+   its first run it prints a generated shared demo password; keep it private.
+   Startup does not seed demo data automatically.
+5. Open `http://127.0.0.1:8000/docs` for the API.
 
 For Render, set the Start Command to `python -m scripts.start` if the service's
 Root Directory is `backend`; if the Root Directory is the repository, use

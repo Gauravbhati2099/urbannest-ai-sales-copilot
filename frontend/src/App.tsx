@@ -116,6 +116,7 @@ function readWorkspacePage(): Page {
     case 'estates':
     case 'tasks':
     case 'activity':
+      return page
     case 'chat':
       return CHAT_ENABLED ? 'chat' : 'overview'
     case 'team':

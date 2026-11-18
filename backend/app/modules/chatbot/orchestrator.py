@@ -171,6 +171,9 @@ async def _run_tool_loop(
     history: Sequence[Mapping[str, str]] = (),
 ) -> ChatTurnResult:
     tool_specs = _ollama_tool_specs(available_tools)
+    import logging
+    logger = logging.getLogger("urbannest.chatbot.trace")
+    logger.info("[chat-trace] MCP tools ready count=%s; starting model loop", len(tool_specs))
     messages: list[dict[str, object]] = [{"role": "system", "content": SYSTEM_PROMPT}]
     history_characters = 0
     bounded_history: list[dict[str, object]] = []
@@ -190,8 +193,10 @@ async def _run_tool_loop(
     messages.append({"role": "user", "content": message})
     executions: list[ChatToolExecution] = []
 
-    for _ in range(MAX_TOOL_CALLS_PER_TURN + 1):
+    for model_turn in range(MAX_TOOL_CALLS_PER_TURN + 1):
+        logger.info("[chat-trace] model turn %s started", model_turn + 1)
         completion: AIChatResult = await complete_chat_with_tools(messages, tool_specs)
+        logger.info("[chat-trace] model turn %s completed tool_calls=%s", model_turn + 1, len(completion.tool_calls))
         if not completion.tool_calls:
             answer = completion.content.strip()
             if not answer:
@@ -217,6 +222,7 @@ async def _run_tool_loop(
             }
         )
         for call in completion.tool_calls:
+            logger.info("[chat-trace] MCP tool started name=%s", call.name)
             if call.name not in ALLOWED_TOOL_NAMES:
                 return _failed_tool_response(executions, "unsupported_tool")
             try:
@@ -243,6 +249,7 @@ async def _run_tool_loop(
             executions.append(
                 ChatToolExecution(name=call.name, status="succeeded")
             )
+            logger.info("[chat-trace] MCP tool completed name=%s", call.name)
             messages.append(
                 {
                     "role": "tool",
@@ -263,6 +270,9 @@ async def answer_chat_message(
     history: Sequence[Mapping[str, str]] = (),
 ) -> ChatTurnResult:
     server_url, service_token, turn_timeout_seconds = _mcp_connection_settings()
+    import logging
+    logger = logging.getLogger("urbannest.chatbot.trace")
+    logger.info("[chat-trace] connecting to MCP url=%s", server_url)
     try:
         async with asyncio.timeout(turn_timeout_seconds):
             async with _connected_mcp_client(
@@ -270,16 +280,20 @@ async def answer_chat_message(
                 service_token,
                 user_token,
             ) as mcp_client:
+                logger.info("[chat-trace] MCP session connected; listing tools")
                 try:
                     tool_result = await mcp_client.list_tools()
                 except MCPError as exc:
                     raise AIServiceError("mcp_service_unavailable") from exc
-                return await _run_tool_loop(
+                logger.info("[chat-trace] MCP tool catalog received count=%s", len(tool_result.tools))
+                result = await _run_tool_loop(
                     message,
                     mcp_client,
                     tool_result.tools,
                     history,
                 )
+                logger.info("[chat-trace] chat turn finished")
+                return result
     except TimeoutError as exc:
         raise AIServiceError("chat_turn_timeout", timed_out=True) from exc
     except MCPError as exc:

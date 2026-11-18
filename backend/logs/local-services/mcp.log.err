@@ -1,0 +1,6 @@
+INFO:     Loading environment from 'C:\Users\export45\Downloads\projects\urbannest-ai-sales-copilot\backend\.env'
+INFO:     Started server process [12876]
+INFO:     Waiting for application startup.
+StreamableHTTP session manager started
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8001 (Press CTRL+C to quit)

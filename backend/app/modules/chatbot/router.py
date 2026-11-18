@@ -123,6 +123,7 @@ async def send_chat_message(
     credentials: AccessCredentials,
     session: DatabaseSession,
 ) -> ChatResponse:
+    LOGGER.info("[chat-trace] request received user_id=%s", current_user.id)
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -132,6 +133,7 @@ async def send_chat_message(
 
     history: list[dict[str, str]] = []
     try:
+        LOGGER.info("[chat-trace] loading conversation history")
         purge_expired_chat_data(session)
         if payload.conversation_id is not None:
             conversation = get_owned_conversation(
@@ -143,15 +145,18 @@ async def send_chat_message(
                 raise HTTPException(status_code=404, detail="Conversation not found")
             history = get_recent_chat_history(session, conversation=conversation)
         session.rollback()
+        LOGGER.info("[chat-trace] conversation history ready messages=%s", len(history))
     except SQLAlchemyError as exc:
         _storage_unavailable(session, exc)
 
     try:
+        LOGGER.info("[chat-trace] entering chat orchestrator")
         result = await answer_chat_message(
             payload.message,
             credentials.credentials,
             history,
         )
+        LOGGER.info("[chat-trace] orchestrator completed tool_calls=%s", len(result.tool_executions))
     except AIServiceError as exc:
         LOGGER.warning("Chat request failed: %s", exc.category)
         raise HTTPException(
@@ -160,6 +165,7 @@ async def send_chat_message(
         ) from None
 
     try:
+        LOGGER.info("[chat-trace] saving assistant response")
         now = datetime.now(timezone.utc)
         if payload.conversation_id is None:
             conversation = ChatConversation(
@@ -207,6 +213,7 @@ async def send_chat_message(
             ]
         )
         session.commit()
+        LOGGER.info("[chat-trace] response saved")
         conversation_id = conversation.id
     except HTTPException:
         session.rollback()

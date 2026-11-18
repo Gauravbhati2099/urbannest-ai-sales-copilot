@@ -1,0 +1,6 @@
+INFO:     Loading environment from 'C:\Users\export45\Downloads\projects\urbannest-ai-sales-copilot\backend\.env'
+INFO:     Started server process [12672]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8002 (Press CTRL+C to quit)
+[inference-trace] Ollama request timed out

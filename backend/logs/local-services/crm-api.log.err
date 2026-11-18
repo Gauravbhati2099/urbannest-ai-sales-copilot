@@ -1,0 +1,129 @@
+INFO:     Loading environment from 'C:\Users\export45\Downloads\projects\urbannest-ai-sales-copilot\backend\.env'
+INFO:     Started server process [3372]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+[ai-trace] inference service returned status=504
+ERROR:    Exception in ASGI application
+  + Exception Group Traceback (most recent call last):
+  |   File "C:\Users\export45\Downloads\projects\urbannest-ai-sales-copilot\.venv\Lib\site-packages\uvicorn\protocols\http\h11_impl.py", line 411, in run_asgi
+  |     result = await app(  # type: ignore[func-returns-value]
+  |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |   File "C:\Users\export45\Downloads\projects\urbannest-ai-sales-copilot\.venv\Lib\site-packages\uvicorn\middleware\proxy_headers.py", line 63, in __call__
+  |     return await self.app(scope, receive, send)
+  |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |   File "C:\Users\export45\Downloads\projects\urbannest-ai-sales-copilot\.venv\Lib\site-packages\starlette\middleware\cors.py", line 91, in __call__
+  |     await self.simple_response(scope, receive, send, request_headers=headers)
+  |   File "C:\Users\export45\Downloads\projects\urbannest-ai-sales-copilot\.venv\Lib\site-packages\starlette\middleware\cors.py", line 149, in simple_response
+  |     await self.app(scope, receive, send)
+  |   File "C:\Users\export45\Downloads\projects\urbannest-ai-sales-copilot\.venv\Lib\site-packages\fastapi\applications.py", line 1194, in __call__
+  |     await super().__call__(scope, receive, send)
+  |   File "C:\Users\export45\Downloads\projects\urbannest-ai-sales-copilot\.venv\Lib\site-packages\starlette\applications.py", line 96, in __call__
+  |     await self.middleware_stack(scope, receive, send)
+  |   File "C:\Users\export45\Downloads\projects\urbannest-ai-sales-copilot\.venv\Lib\site-packages\starlette\middleware\errors.py", line 186, in __call__
+  |     raise exc
+  |   File "C:\Users\export45\Downloads\projects\urbannest-ai-sales-copilot\.venv\Lib\site-packages\starlette\middleware\errors.py", line 164, in __call__
+  |     await self.app(scope, receive, _send)
+  |   File "C:\Users\export45\Downloads\projects\urbannest-ai-sales-copilot\.venv\Lib\site-packages\fastapi\telemetry\_asgi.py", line 151, in __call__
+  |     await self.app(scope, receive, send)
+  |   File "C:\Users\export45\Downloads\projects\urbannest-ai-sales-copilot\.venv\Lib\site-packages\starlette\middleware\exceptions.py", line 63, in __call__
+  |     await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  |   File "C:\Users\export45\Downloads\projects\urbannest-ai-sales-copilot\.venv\Lib\site-packages\starlette\_exception_handler.py", line 53, in wrapped_app
+  |     raise exc
+  |   File "C:\Users\export45\Downloads\projects\urbannest-ai-sales-copilot\.venv\Lib\site-packages\starlette\_exception_handler.py", line 42, in wrapped_app
+  |     await app(scope, receive, sender)
+  |   File "C:\Users\export45\Downloads\projects\urbannest-ai-sales-copilot\.venv\Lib\site-packages\fastapi\middleware\asyncexitstack.py", line 18, in __call__
+  |     await self.app(scope, receive, send)
+  |   File "C:\Users\export45\Downloads\projects\urbannest-ai-sales-copilot\.venv\Lib\site-packages\starlette\routing.py", line 683, in __call__
+  |     await self.middleware_stack(scope, receive, send)
+  |   File "C:\Users\export45\Downloads\projects\urbannest-ai-sales-copilot\.venv\Lib\site-packages\fastapi\routing.py", line 2811, in app
+  |     await route.handle(scope, receive, send)
+  |   File "C:\Users\export45\Downloads\projects\urbannest-ai-sales-copilot\.venv\Lib\site-packages\fastapi\routing.py", line 1839, in handle
+  |     await self.original_router.handle(scope, receive, send)
+  |   File "C:\Users\export45\Downloads\projects\urbannest-ai-sales-copilot\.venv\Lib\site-packages\fastapi\routing.py", line 2894, in handle
+  |     await included_router._handle_selected(scope, receive, send)
+  |   File "C:\Users\export45\Downloads\projects\urbannest-ai-sales-copilot\.venv\Lib\site-packages\fastapi\routing.py", line 1865, in _handle_selected
+  |     await original_route.handle(scope, receive, send)
+  |   File "C:\Users\export45\Downloads\projects\urbannest-ai-sales-copilot\.venv\Lib\site-packages\fastapi\routing.py", line 1328, in handle
+  |     await effective_context.app(scope, receive, send)
+  |   File "C:\Users\export45\Downloads\projects\urbannest-ai-sales-copilot\.venv\Lib\site-packages\fastapi\routing.py", line 166, in app
+  |     await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  |   File "C:\Users\export45\Downloads\projects\urbannest-ai-sales-copilot\.venv\Lib\site-packages\starlette\_exception_handler.py", line 53, in wrapped_app
+  |     raise exc
+  |   File "C:\Users\export45\Downloads\projects\urbannest-ai-sales-copilot\.venv\Lib\site-packages\starlette\_exception_handler.py", line 42, in wrapped_app
+  |     await app(scope, receive, sender)
+  |   File "C:\Users\export45\Downloads\projects\urbannest-ai-sales-copilot\.venv\Lib\site-packages\fastapi\routing.py", line 152, in app
+  |     response = await f(request)
+  |                ^^^^^^^^^^^^^^^^
+  |   File "C:\Users\export45\Downloads\projects\urbannest-ai-sales-copilot\.venv\Lib\site-packages\fastapi\routing.py", line 745, in app
+  |     raw_response = await run_endpoint_function(
+  |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |   File "C:\Users\export45\Downloads\projects\urbannest-ai-sales-copilot\.venv\Lib\site-packages\fastapi\routing.py", line 372, in run_endpoint_function
+  |     return await dependant.call(**values)
+  |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |   File "C:\Users\export45\Downloads\projects\urbannest-ai-sales-copilot\backend\app\modules\chatbot\router.py", line 154, in send_chat_message
+  |     result = await answer_chat_message(
+  |              ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |   File "C:\Users\export45\Downloads\projects\urbannest-ai-sales-copilot\backend\app\modules\chatbot\orchestrator.py", line 278, in answer_chat_message
+  |     async with _connected_mcp_client(
+  |                ^^^^^^^^^^^^^^^^^^^^^^
+  |   File "C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.12_3.12.2800.0_x64__qbz5n2kfra8p0\Lib\contextlib.py", line 231, in __aexit__
+  |     await self.gen.athrow(value)
+  |   File "C:\Users\export45\Downloads\projects\urbannest-ai-sales-copilot\backend\app\modules\chatbot\orchestrator.py", line 124, in _connected_mcp_client
+  |     async with Client(transport) as client:
+  |                ^^^^^^^^^^^^^^^^^
+  |   File "C:\Users\export45\Downloads\projects\urbannest-ai-sales-copilot\.venv\Lib\site-packages\mcp\client\client.py", line 480, in __aexit__
+  |     await self._exit_stack.__aexit__(exc_type, exc_val, exc_tb)
+  |   File "C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.12_3.12.2800.0_x64__qbz5n2kfra8p0\Lib\contextlib.py", line 754, in __aexit__
+  |     raise exc_details[1]
+  |   File "C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.12_3.12.2800.0_x64__qbz5n2kfra8p0\Lib\contextlib.py", line 737, in __aexit__
+  |     cb_suppress = await cb(*exc_details)
+  |                   ^^^^^^^^^^^^^^^^^^^^^^
+  |   File "C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.12_3.12.2800.0_x64__qbz5n2kfra8p0\Lib\contextlib.py", line 231, in __aexit__
+  |     await self.gen.athrow(value)
+  |   File "C:\Users\export45\Downloads\projects\urbannest-ai-sales-copilot\.venv\Lib\site-packages\mcp\client\streamable_http.py", line 771, in streamable_http_client
+  |     anyio.create_task_group() as tg,
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+  |   File "C:\Users\export45\Downloads\projects\urbannest-ai-sales-copilot\.venv\Lib\site-packages\anyio\_backends\_asyncio.py", line 871, in __aexit__
+  |     raise BaseExceptionGroup(
+  | ExceptionGroup: unhandled errors in a TaskGroup (1 sub-exception)
+  +-+---------------- 1 ----------------
+    | Exception Group Traceback (most recent call last):
+    |   File "C:\Users\export45\Downloads\projects\urbannest-ai-sales-copilot\.venv\Lib\site-packages\mcp\client\streamable_http.py", line 788, in streamable_http_client
+    |     yield read_stream, write_stream
+    |   File "C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.12_3.12.2800.0_x64__qbz5n2kfra8p0\Lib\contextlib.py", line 737, in __aexit__
+    |     cb_suppress = await cb(*exc_details)
+    |                   ^^^^^^^^^^^^^^^^^^^^^^
+    |   File "C:\Users\export45\Downloads\projects\urbannest-ai-sales-copilot\.venv\Lib\site-packages\mcp\client\session.py", line 514, in __aexit__
+    |     result = await self._task_group.__aexit__(exc_type, exc_val, exc_tb)
+    |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "C:\Users\export45\Downloads\projects\urbannest-ai-sales-copilot\.venv\Lib\site-packages\anyio\_backends\_asyncio.py", line 871, in __aexit__
+    |     raise BaseExceptionGroup(
+    | ExceptionGroup: unhandled errors in a TaskGroup (1 sub-exception)
+    +-+---------------- 1 ----------------
+      | Traceback (most recent call last):
+      |   File "C:\Users\export45\Downloads\projects\urbannest-ai-sales-copilot\backend\app\modules\ai\service.py", line 401, in _complete_chat_remote
+      |     response.raise_for_status()
+      |   File "C:\Users\export45\Downloads\projects\urbannest-ai-sales-copilot\.venv\Lib\site-packages\httpx\_models.py", line 829, in raise_for_status
+      |     raise HTTPStatusError(message, request=request, response=self)
+      | httpx.HTTPStatusError: Server error '504 Gateway Timeout' for url 'http://127.0.0.1:8002/v1/chat'
+      | For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/504
+      | 
+      | The above exception was the direct cause of the following exception:
+      | 
+      | Traceback (most recent call last):
+      |   File "C:\Users\export45\Downloads\projects\urbannest-ai-sales-copilot\backend\app\modules\chatbot\orchestrator.py", line 125, in _connected_mcp_client
+      |     yield client
+      |   File "C:\Users\export45\Downloads\projects\urbannest-ai-sales-copilot\backend\app\modules\chatbot\orchestrator.py", line 289, in answer_chat_message
+      |     result = await _run_tool_loop(
+      |              ^^^^^^^^^^^^^^^^^^^^^
+      |   File "C:\Users\export45\Downloads\projects\urbannest-ai-sales-copilot\backend\app\modules\chatbot\orchestrator.py", line 198, in _run_tool_loop
+      |     completion: AIChatResult = await complete_chat_with_tools(messages, tool_specs)
+      |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      |   File "C:\Users\export45\Downloads\projects\urbannest-ai-sales-copilot\backend\app\modules\ai\service.py", line 281, in complete_chat_with_tools
+      |     return await _complete_chat_remote(service_url, service_token, messages, tools)
+      |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      |   File "C:\Users\export45\Downloads\projects\urbannest-ai-sales-copilot\backend\app\modules\ai\service.py", line 432, in _complete_chat_remote
+      |     raise AIServiceError("provider_http_error") from exc
+      | app.modules.ai.service.AIServiceError: provider_http_error
+      +------------------------------------

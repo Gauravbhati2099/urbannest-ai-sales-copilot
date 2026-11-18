@@ -368,6 +368,7 @@ async def _complete_chat_remote(
     messages: list[dict[str, object]],
     tools: list[dict[str, object]],
 ) -> AIChatResult:
+    LOGGER.info("[ai-trace] calling inference service url=%s/v1/chat", base_url.rstrip("/"))
     parsed = urlsplit(base_url)
     if (
         parsed.scheme not in {"http", "https"}
@@ -398,6 +399,7 @@ async def _complete_chat_remote(
                 json={"messages": messages, "tools": tools},
             )
         response.raise_for_status()
+        LOGGER.info("[ai-trace] inference service responded status=%s", response.status_code)
         payload = response.json()
         message = {"content": payload["content"], "tool_calls": payload["tool_calls"]}
         if not isinstance(message["content"], str) or not isinstance(
@@ -423,10 +425,13 @@ async def _complete_chat_remote(
             tool_calls.append(AIToolCall(name, arguments))
         return AIChatResult(message["content"], tuple(tool_calls))
     except httpx.TimeoutException as exc:
+        LOGGER.warning("[ai-trace] inference service request timed out")
         raise AIServiceError("provider_timeout", timed_out=True) from exc
     except httpx.HTTPStatusError as exc:
+        LOGGER.warning("[ai-trace] inference service returned status=%s", exc.response.status_code)
         raise AIServiceError("provider_http_error") from exc
     except httpx.RequestError as exc:
+        LOGGER.warning("[ai-trace] inference service connection failed: %s", type(exc).__name__)
         raise AIServiceError("provider_unavailable") from exc
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise AIServiceError("invalid_provider_response") from exc

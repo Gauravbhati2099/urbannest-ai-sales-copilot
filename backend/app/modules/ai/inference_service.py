@@ -132,11 +132,13 @@ def structured(
 async def chat(
     request: ChatRequest, authorization: str | None = Header(default=None)
 ) -> dict[str, Any]:
+    LOGGER.info("[inference-trace] chat request received messages=%s tools=%s", len(request.messages), len(request.tools))
     _authorize(authorization)
     try:
         provider, model, timeout, _ = _settings()
         if provider != "ollama":
             raise AIServiceError("provider_not_configured")
+        LOGGER.info("[inference-trace] forwarding to Ollama model=%s url=%s", model, _ollama_chat_url())
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=False, trust_env=False) as client:
             response = await client.post(
                 _ollama_chat_url(),
@@ -149,15 +151,17 @@ async def chat(
                 },
             )
         response.raise_for_status()
+        LOGGER.info("[inference-trace] Ollama response received status=%s", response.status_code)
         payload = response.json()
         message = payload["message"]
         return {"content": message.get("content", ""), "tool_calls": message.get("tool_calls", [])}
     except AIServiceError as exc:
         raise HTTPException(status_code=503, detail="Inference provider is unavailable") from exc
     except httpx.TimeoutException as exc:
+        LOGGER.warning("[inference-trace] Ollama request timed out")
         raise HTTPException(status_code=504, detail="Inference request timed out") from exc
     except httpx.HTTPError as exc:
-        LOGGER.warning("Ollama chat request failed: %s", type(exc).__name__)
+        LOGGER.warning("[inference-trace] Ollama chat request failed: %s", type(exc).__name__)
         raise HTTPException(status_code=503, detail="Inference provider is unavailable") from exc
     except (KeyError, TypeError, ValueError) as exc:
         raise HTTPException(status_code=502, detail="Inference provider returned invalid output") from exc
